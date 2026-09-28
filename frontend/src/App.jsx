@@ -39,27 +39,30 @@ function App() {
   });
   const [resources, setResources] = useState([]);
   const [requests, setRequests] = useState([]);
+  const [allRequests, setAllRequests] = useState([]);
   const [matches, setMatches] = useState([]);
   const [history, setHistory] = useState([]);
   const [message, setMessage] = useState("");
 
   const loadData = async () => {
-    try {
-      const [r, q, m, h] = await Promise.all([
-        fetch(`${API}/resources`).then(x => x.json()),
-        fetch(`${API}/requests`).then(x => x.json()),
-        fetch(`${API}/matches`).then(x => x.json()),
-        fetch(`${API}/history`).then(x => x.json())
-      ]);
+  try {
+    const [r, q, allQ, m, h] = await Promise.all([
+      fetch(`${API}/resources`).then(x => x.json()),
+      fetch(`${API}/requests`).then(x => x.json()),
+      fetch(`${API}/requests/all`).then(x => x.json()),
+      fetch(`${API}/matches`).then(x => x.json()),
+      fetch(`${API}/history`).then(x => x.json())
+    ]);
 
-      setResources(r);
-      setRequests(q);
-      setMatches(m);
-      setHistory(h);
-    } catch {
-      setMessage("Backend is not running. Start Flask first.");
-    }
-  };
+    setResources(r);
+    setRequests(q);
+    setAllRequests(allQ);
+    setMatches(m);
+    setHistory(h);
+  } catch {
+    setMessage("Backend is not running. Start Flask first.");
+  }
+};
 
   useEffect(() => {
     loadData();
@@ -166,7 +169,30 @@ function App() {
       setTab("history");
     }
   };
+  const updateRequestStatus = async (requestId, status) => {
+  try {
+    const response = await fetch(
+      `${API}/requests/${requestId}/status`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ status })
+      }
+    );
 
+    const data = await response.json();
+
+    setMessage(data.message || data.error);
+
+    if (response.ok) {
+      await loadData();
+    }
+  } catch {
+    setMessage("Could not update request status.");
+  }
+};
   const resetDemo = async () => {
     await fetch(`${API}/reset`, {
       method: "POST"
@@ -237,6 +263,25 @@ function App() {
           <button onClick={() => setTab("map")}>
           🗺️ Live Disaster Map
           </button>
+          <button
+  className={tab === "inventory" ? "active" : ""}
+  onClick={() => {
+    loadData();
+    setTab("inventory");
+  }}
+>
+  📦 Resource Inventory
+</button>
+
+<button
+  className={tab === "tracking" ? "active" : ""}
+  onClick={() => {
+    loadData();
+    setTab("tracking");
+  }}
+>
+  📋 Request Tracking
+</button>
 
           <button
             className={tab === "history" ? "active" : ""}
@@ -401,111 +446,127 @@ function App() {
           )}
 
           {tab === "matches" && (
-            <section>
-              <div className="page-heading">
-                <div>
-                  <p className="eyebrow">
-                    INTELLIGENT RESOURCE ALLOCATION
-                  </p>
+  <section>
+    <div className="page-heading">
+      <div>
+        <p className="eyebrow">
+          INTELLIGENT RESOURCE ALLOCATION
+        </p>
 
-                  <h2>AI Match Results</h2>
+        <h2>AI Match Results</h2>
 
-                  <p>
-                    Matches are generated using an
-                    explainable scoring model.
-                  </p>
-                </div>
+        <p>
+          Matches are generated using an explainable scoring model.
+          Multiple donors can contribute to the same rescue request.
+        </p>
+      </div>
 
-                <button
-                  className="primary"
-                  onClick={runAI}
+      <button
+        className="primary"
+        onClick={runAI}
+      >
+        <BrainCircuit size={18} />
+        Re-run AI
+      </button>
+    </div>
+
+    {matches.length === 0 ? (
+      <div className="empty">
+        <BrainCircuit size={42} />
+
+        <h3>No matches yet</h3>
+
+        <p>
+          Post at least one resource and one request
+          with the same category.
+        </p>
+      </div>
+    ) : (
+      <div className="match-list">
+        {matches.map((m, index) => (
+          <div
+            className="match-card"
+            key={`${m.request.id}-${m.resource.id}-${index}`}
+          >
+            <div className="match-score">
+              {m.score}
+              <small>%</small>
+            </div>
+
+            <div className="match-main">
+
+              <div className="match-head">
+                <span
+                  className={`urgency ${urgencyClass(
+                    m.request.urgency
+                  )}`}
                 >
-                  <BrainCircuit size={18} />
-                  Re-run AI
-                </button>
+                  {m.request.urgency}
+                </span>
+
+                <span className="type">
+                  {m.request.type}
+                </span>
               </div>
 
-              {matches.length === 0 ? (
-                <div className="empty">
-                  <BrainCircuit size={42} />
-                  <h3>No matches yet</h3>
-                  <p>
-                    Post at least one resource and one
-                    request with the same category.
-                  </p>
-                </div>
-              ) : (
-                <div className="match-list">
-                  {matches.map(m => (
-                    <div
-                      className="match-card"
-                      key={m.request.id}
-                    >
-                      <div className="match-score">
-                        {m.score}
-                        <small>%</small>
-                      </div>
+              <h3>
+                {m.request.name} needed by{" "}
+                {m.request.team}
+              </h3>
 
-                      <div className="match-main">
-                        <div className="match-head">
-                          <span
-                            className={`urgency ${urgencyClass(
-                              m.request.urgency
-                            )}`}
-                          >
-                            {m.request.urgency}
-                          </span>
+              <p>
+                <strong>Request:</strong>{" "}
+                {m.request.quantity}{" "}
+                {m.request.unit}
+                {" • "}
+                {m.request.location}
+              </p>
 
-                          <span className="type">
-                            {m.request.type}
-                          </span>
-                        </div>
+              <p>
+                <strong>Donor:</strong>{" "}
+                {m.resource.provider}
+              </p>
 
-                        <h3>
-                          {m.request.name} needed by{" "}
-                          {m.request.team}
-                        </h3>
+              <p>
+                <strong>Available:</strong>{" "}
+                {m.resource.quantity}{" "}
+                {m.resource.unit}
+              </p>
 
-                        <p>
-                          <strong>Need:</strong>{" "}
-                          {m.request.quantity}{" "}
-                          {m.request.unit} •{" "}
-                          {m.request.location}
-                        </p>
+              <p className="reason">
+                <MapPin size={15} />
+                {m.reason}
+              </p>
+            </div>
 
-                        <p>
-                          <strong>Available:</strong>{" "}
-                          {m.resource.quantity}{" "}
-                          {m.resource.unit} •{" "}
-                          {m.resource.provider}
-                        </p>
-
-                        <p className="reason">
-                          <MapPin size={15} />
-                          {m.reason}
-                        </p>
-                      </div>
-
-                      <button
-                        className="confirm"
-                        onClick={() => confirmMatch(m)}
-                      >
-                        <CheckCircle2 size={17} />
-                        Confirm
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
+            <button
+              className="confirm"
+              onClick={() => confirmMatch(m)}
+            >
+              <CheckCircle2 size={17} />
+              Confirm Donor
+            </button>
+          </div>
+        ))}
+      </div>
+    )}
+  </section>
+)}
           {tab === "map" && (
               <LiveDisasterMap
                   resources={resources}
                   requests={requests}
               />
          )}
-
+         {tab === "inventory" && (
+  <InventoryPage resources={resources} />
+)}
+         {tab === "tracking" && (
+  <RequestTrackingPage
+    requests={allRequests}
+    updateRequestStatus={updateRequestStatus}
+  />
+)}
           {tab === "history" && (
             <HistoryPage history={history} />
           )}
@@ -725,7 +786,232 @@ function HistoryPage({ history }) {
     </section>
   );
 }
+function InventoryPage({ resources }) {
+  const getStockStatus = quantity => {
+    if (quantity <= 0) {
+      return {
+        text: "Out of Stock",
+        className: "stock-out"
+      };
+    }
 
+    if (quantity <= 20) {
+      return {
+        text: "Low Stock",
+        className: "stock-low"
+      };
+    }
+
+    return {
+      text: "Available",
+      className: "stock-available"
+    };
+  };
+
+  return (
+    <section>
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">RESOURCE MANAGEMENT</p>
+          <h2>Resource Inventory</h2>
+          <p>
+            View currently available relief resources and their stock levels.
+          </p>
+        </div>
+      </div>
+
+      {resources.length === 0 ? (
+        <div className="empty">
+          <Package size={42} />
+          <h3>No resources available</h3>
+          <p>Donors can post resources from the Donor Resources page.</p>
+        </div>
+      ) : (
+        <div className="inventory-grid">
+          {resources.map(resource => {
+            const stock = getStockStatus(Number(resource.quantity));
+
+            return (
+              <div className="inventory-card card" key={resource.id}>
+                <div className="inventory-icon">
+                  <Package size={25} />
+                </div>
+
+                <div className="inventory-content">
+                  <div className="inventory-top">
+                    <span className="type">
+                      {resource.type}
+                    </span>
+
+                    <span className={`stock-status ${stock.className}`}>
+                      {stock.text}
+                    </span>
+                  </div>
+
+                  <h3>{resource.name}</h3>
+
+                  <div className="inventory-quantity">
+                    <strong>
+                      {resource.quantity}
+                    </strong>
+
+                    <span>{resource.unit}</span>
+                  </div>
+
+                  <p>
+                    <strong>Donor:</strong>{" "}
+                    {resource.provider}
+                  </p>
+
+                  <p>
+                    <MapPin size={14} />
+                    {resource.location}
+                  </p>
+
+                  <span
+                    className={`urgency ${urgencyClass(
+                      resource.urgency
+                    )}`}
+                  >
+                    {resource.urgency}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+function RequestTrackingPage({
+  requests,
+  updateRequestStatus
+}) {
+  const getStatusClass = status => {
+    if (status === "Delivered") return "status-delivered";
+    if (status === "In Transit") return "status-transit";
+    if (status === "Matched") return "status-matched";
+
+    return "status-open";
+  };
+
+  return (
+    <section>
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">RELIEF REQUEST MANAGEMENT</p>
+
+          <h2>Request Status Tracking</h2>
+
+          <p>
+            Track the progress of rescue requests from submission
+            to delivery.
+          </p>
+        </div>
+      </div>
+
+      {requests.length === 0 ? (
+        <div className="empty">
+          <Clock size={42} />
+
+          <h3>No requests found</h3>
+
+          <p>
+            Rescue teams can create requests from the Rescue
+            Requests page.
+          </p>
+        </div>
+      ) : (
+        <div className="tracking-list">
+          {requests.map(request => (
+            <div
+              className="tracking-card card"
+              key={request.id}
+            >
+              <div className="tracking-main">
+
+                <div className="tracking-header">
+                  <div>
+                    <span
+                      className={`urgency ${urgencyClass(
+                        request.urgency
+                      )}`}
+                    >
+                      {request.urgency}
+                    </span>
+
+                    <span className="type">
+                      {request.type}
+                    </span>
+                  </div>
+
+                  <span
+                    className={`request-status ${getStatusClass(
+                      request.status
+                    )}`}
+                  >
+                    {request.status || "Open"}
+                  </span>
+                </div>
+
+                <h3>{request.name}</h3>
+
+                <p>
+                  <strong>Required:</strong>{" "}
+                  {request.quantity} {request.unit}
+                </p>
+
+                <p>
+                  <strong>Rescue Team:</strong>{" "}
+                  {request.team}
+                </p>
+
+                <p>
+                  <MapPin size={14} />
+                  {request.location}
+                </p>
+
+                <div className="status-actions">
+
+                  {request.status !== "In Transit" &&
+                    request.status !== "Delivered" && (
+                      <button
+                        className="status-button"
+                        onClick={() =>
+                          updateRequestStatus(
+                            request.id,
+                            "In Transit"
+                          )
+                        }
+                      >
+                        🚚 Mark In Transit
+                      </button>
+                    )}
+
+                  {request.status !== "Delivered" && (
+                    <button
+                      className="status-button delivered-button"
+                      onClick={() =>
+                        updateRequestStatus(
+                          request.id,
+                          "Delivered"
+                        )
+                      }
+                    >
+                      ✓ Mark Delivered
+                    </button>
+                  )}
+
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
 function Stat({ icon, label, value }) {
   return (
     <div className="stat card">

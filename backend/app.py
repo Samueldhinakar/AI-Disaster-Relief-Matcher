@@ -247,7 +247,18 @@ def requests_api():
 
     conn.close()
     return jsonify([row_to_dict(r) for r in rows])
+@app.route("/api/requests/all")
+def all_requests():
+    conn = get_db()
 
+    rows = conn.execute("""
+        SELECT * FROM requests
+        ORDER BY id DESC
+    """).fetchall()
+
+    conn.close()
+
+    return jsonify([row_to_dict(r) for r in rows])
 def get_matches():
     conn = get_db()
 
@@ -269,7 +280,13 @@ def get_matches():
         candidates = []
 
         for resource in resources:
+
+            # Match resource category/type
             if resource["type"].lower() != req["type"].lower():
+                continue
+
+            # Match product name
+            if resource["name"].lower() != req["name"].lower():
                 continue
 
             score = calculate_match(resource, req)
@@ -279,8 +296,8 @@ def get_matches():
                 "resource": row_to_dict(resource),
                 "score": score,
                 "quantity_match": min(
-                    resource["quantity"],
-                    req["quantity"]
+                    float(resource["quantity"]),
+                    float(req["quantity"])
                 ),
                 "reason": (
                     "Matched using resource type, product name, "
@@ -288,14 +305,17 @@ def get_matches():
                 )
             })
 
+        # Highest scoring donor first
         candidates.sort(
             key=lambda x: x["score"],
             reverse=True
         )
 
+        # Add ALL suitable donors
         if candidates:
-            matches.append(candidates[0])
+            matches.extend(candidates)
 
+    # Sort by urgency first, then AI score
     matches.sort(
         key=lambda x: (
             urgency_score(x["request"]["urgency"]),
@@ -325,11 +345,13 @@ def confirm_match(request_id):
 
     conn = get_db()
 
+    # Get the rescue request
     req = conn.execute(
         "SELECT * FROM requests WHERE id=?",
         (request_id,)
     ).fetchone()
 
+    # Get the donor resource
     resource = conn.execute(
         "SELECT * FROM resources WHERE id=?",
         (resource_id,)
@@ -341,14 +363,15 @@ def confirm_match(request_id):
             "error": "Request or resource not found"
         }), 404
 
-    if req["status"] != "Open":
+    # Allow Open requests to receive multiple donors
+    if req["status"] == "Matched":
         conn.close()
         return jsonify({
-            "error": "This request has already been matched."
+            "error": "This request has already been completely fulfilled."
         }), 400
 
     available = float(resource["quantity"])
-    needed = float(req["quantity"])
+    requested_quantity = float(req["quantity"])
 
     if available <= 0:
         conn.close()
@@ -356,10 +379,45 @@ def confirm_match(request_id):
             "error": "Resource is no longer available."
         }), 400
 
-    supplied = min(needed, available)
-    remaining = available - supplied
+    # -------------------------------------------------
+    # Calculate how much has already been supplied
+    # -------------------------------------------------
 
-    # Save the confirmed match BEFORE changing the request/resource status.
+    fulfilled_row = conn.execute("""
+        SELECT COALESCE(SUM(supplied_quantity), 0) AS total_supplied
+        FROM match_history
+        WHERE request_id=?
+    """, (request_id,)).fetchone()
+
+    already_supplied = float(fulfilled_row["total_supplied"])
+
+    remaining_needed = requested_quantity - already_supplied
+
+    if remaining_needed <= 0:
+        conn.execute(
+            "UPDATE requests SET status='Matched' WHERE id=?",
+            (request_id,)
+        )
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            "message": "This request has already been completely fulfilled."
+        }), 400
+
+    # -------------------------------------------------
+    # Calculate this donor's contribution
+    # -------------------------------------------------
+
+    supplied = min(remaining_needed, available)
+
+    remaining_resource = available - supplied
+    remaining_request = remaining_needed - supplied
+
+    # -------------------------------------------------
+    # Save this donor match in history
+    # -------------------------------------------------
+
     conn.execute("""
         INSERT INTO match_history
         (request_id, resource_id, resource_name, resource_type,
@@ -371,7 +429,7 @@ def confirm_match(request_id):
         resource["id"],
         resource["name"],
         resource["type"],
-        needed,
+        requested_quantity,
         supplied,
         resource["unit"],
         req["urgency"],
@@ -382,12 +440,11 @@ def confirm_match(request_id):
         datetime.now().isoformat(timespec="seconds")
     ))
 
-    conn.execute(
-        "UPDATE requests SET status='Matched' WHERE id=?",
-        (request_id,)
-    )
+    # -------------------------------------------------
+    # Update donor inventory
+    # -------------------------------------------------
 
-    if remaining <= 0:
+    if remaining_resource <= 0:
         conn.execute("""
             UPDATE resources
             SET quantity=0, status='Matched'
@@ -398,17 +455,103 @@ def confirm_match(request_id):
             UPDATE resources
             SET quantity=?
             WHERE id=?
-        """, (remaining, resource_id))
+        """, (remaining_resource, resource_id))
+
+    # -------------------------------------------------
+    # Update request status
+    # -------------------------------------------------
+
+    if remaining_request <= 0:
+        # Entire request has been fulfilled
+        conn.execute("""
+            UPDATE requests
+            SET status='Matched'
+            WHERE id=?
+        """, (request_id,))
+
+        final_status = "Matched"
+    else:
+        # More donors are still required
+        # Keep request Open so another donor can fulfill it
+        conn.execute("""
+            UPDATE requests
+            SET status='Open'
+            WHERE id=?
+        """, (request_id,))
+
+        final_status = "Partially Matched"
 
     conn.commit()
     conn.close()
 
     return jsonify({
-        "message": "Match confirmed and saved to history.",
+        "message": "Donor contribution confirmed successfully.",
         "supplied_quantity": supplied,
-        "remaining_resource_quantity": remaining
+        "remaining_request_quantity": remaining_request,
+        "remaining_resource_quantity": remaining_resource,
+        "request_status": final_status
     })
+@app.route("/api/inventory")
+def inventory():
+    conn = get_db()
 
+    rows = conn.execute("""
+        SELECT *
+        FROM resources
+        ORDER BY id DESC
+    """).fetchall()
+
+    conn.close()
+
+    return jsonify([row_to_dict(r) for r in rows])
+
+
+
+
+@app.route("/api/requests/<int:request_id>/status", methods=["PUT"])
+def update_request_status(request_id):
+    data = request.get_json() or {}
+    new_status = data.get("status")
+
+    allowed_statuses = [
+        "Open",
+        "Matched",
+        "In Transit",
+        "Delivered"
+    ]
+
+    if new_status not in allowed_statuses:
+        return jsonify({
+            "error": "Invalid status",
+            "allowed_statuses": allowed_statuses
+        }), 400
+
+    conn = get_db()
+
+    request_row = conn.execute(
+        "SELECT * FROM requests WHERE id=?",
+        (request_id,)
+    ).fetchone()
+
+    if not request_row:
+        conn.close()
+        return jsonify({
+            "error": "Request not found"
+        }), 404
+
+    conn.execute(
+        "UPDATE requests SET status=? WHERE id=?",
+        (new_status, request_id)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "message": "Request status updated successfully",
+        "request_id": request_id,
+        "status": new_status
+    })
 @app.route("/api/history")
 def history():
     conn = get_db()
