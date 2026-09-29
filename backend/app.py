@@ -1,8 +1,12 @@
+import re
 from flask import Flask, request, jsonify, send_from_directory
 import os
 from flask_cors import CORS
 import sqlite3
 from datetime import datetime
+import requests
+import csv
+import math
 
 app = Flask(__name__)
 CORS(app)
@@ -11,7 +15,47 @@ FRONTEND_FOLDER = os.path.join(
     "frontend",
     "dist"
 )
+DISTRICT_COORDINATES = {
 
+    "ARIYALUR": (11.1401, 79.0786),
+    "CHENGALPATTU": (12.6819, 79.9888),
+    "CHENNAI": (13.0827, 80.2707),
+    "COIMBATORE": (11.0168, 76.9558),
+    "CUDDALORE": (11.7480, 79.7714),
+    "DHARMAPURI": (12.1211, 78.1582),
+    "DINDIGUL": (10.3673, 77.9803),
+    "ERODE": (11.3410, 77.7172),
+    "KALLAKURICHI": (11.7401, 78.9597),
+    "KANCHIPURAM": (12.8342, 79.7036),
+    "KANNIYAKUMARI": (8.0883, 77.5385),
+    "KARUR": (10.9601, 78.0766),
+    "KRISHNAGIRI": (12.5186, 78.2137),
+    "MADURAI": (9.9252, 78.1198),
+    "MAYILADUTHURAI": (11.1018, 79.6525),
+    "NAGAPATTINAM": (10.7656, 79.8424),
+    "NAMAKKAL": (11.2194, 78.1677),
+    "PERAMBALUR": (11.2342, 78.8806),
+    "PUDUKKOTTAI": (10.3797, 78.8208),
+    "RAMANATHAPURAM": (9.3639, 78.8395),
+    "RANIPET": (12.9249, 79.3333),
+    "SALEM": (11.6643, 78.1460),
+    "SIVAGANGA": (9.8433, 78.4809),
+    "TENKASI": (8.9591, 77.3152),
+    "THANJAVUR": (10.7870, 79.1378),
+    "THE NILGIRIS": (11.4102, 76.6950),
+    "THENI": (10.0104, 77.4768),
+    "THOOTHUKUDI": (8.7642, 78.1348),
+    "TIRUCHIRAPPALLI": (10.7905, 78.7047),
+    "TIRUNELVELI": (8.7139, 77.7567),
+    "TIRUPATHUR": (12.4970, 78.5670),
+    "TIRUPPUR": (11.1085, 77.3411),
+    "TIRUVALLUR": (13.1438, 79.9080),
+    "TIRUVANNAMALAI": (12.2253, 79.0747),
+    "TIRUVARUR": (10.7725, 79.6368),
+    "VELLORE": (12.9165, 79.1325),
+    "VILLUPURAM": (11.9401, 79.4861),
+    "VIRUDHUNAGAR": (9.5680, 77.9624)
+}
 @app.route("/")
 def serve_frontend():
     return send_from_directory(FRONTEND_FOLDER, "index.html")
@@ -26,6 +70,12 @@ def serve_static(path):
     return send_from_directory(FRONTEND_FOLDER, "index.html")
 
 DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "disaster_relief.db")
+# CWC CSV file
+CWC_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data",
+    "rwl_tel_hr_cwc_009_2026_2030.csv"
+)
 
 def get_db():
     conn = sqlite3.connect(DB)
@@ -102,7 +152,1616 @@ def urgency_score(value):
         "Medium": 2,
         "Low": 1
     }.get(value, 1)
+# =========================================================
+# PRE-DISASTER AI RISK ENGINE
+# =========================================================
 
+IMD_WARNING_SCORES = {
+    1: 0,
+    2: 55,
+    3: 20,
+    4: 35,
+    5: 30,
+    6: 10,
+    7: 10,
+    8: 20,
+    9: 10,
+    10: 10,
+    11: 10,
+    12: 20,
+    13: 20,
+    14: 10,
+    15: 10,
+    16: 75,
+    17: 95
+}
+
+
+IMD_COLOR_SCORES = {
+    1: 95,
+    2: 70,
+    3: 35,
+    4: 10
+}
+
+
+CWC_FLOOD_SCORES = {
+    "Normal": 10,
+    "Above Normal": 55,
+    "Severe": 80,
+    "Extreme": 100
+}
+
+
+CWC_TREND_ADJUSTMENT = {
+    "Rising": 10,
+    "Steady": 0,
+    "Falling": -5
+}
+
+
+def calculate_pre_disaster_risk(
+    imd_warning_score,
+    imd_color_score,
+    cwc_flood_score,
+    cwc_trend
+):
+
+    # Select the more severe IMD indicator
+    imd_score = max(
+        imd_warning_score,
+        imd_color_score
+    )
+
+    # Adjust CWC score based on river trend
+    trend_adjustment = CWC_TREND_ADJUSTMENT.get(
+        cwc_trend,
+        0
+    )
+
+    cwc_score = cwc_flood_score + trend_adjustment
+
+    # Keep score between 0 and 100
+    cwc_score = max(
+        0,
+        min(100, cwc_score)
+    )
+
+    # Calculate final AI risk score
+    final_score = (
+        (imd_score * 0.60) +
+        (cwc_score * 0.40)
+    )
+
+    final_score = round(
+        max(0, min(100, final_score))
+    )
+
+    # Determine risk level
+    if final_score >= 75:
+        risk_level = "CRITICAL"
+
+    elif final_score >= 50:
+        risk_level = "HIGH"
+
+    elif final_score >= 25:
+        risk_level = "MEDIUM"
+
+    else:
+        risk_level = "LOW"
+
+    return {
+        "imd_score": round(imd_score),
+        "cwc_score": round(cwc_score),
+        "final_score": final_score,
+        "risk_level": risk_level,
+        "trend_adjustment": trend_adjustment
+    }
+def test_cwc_file():
+
+    if os.path.exists(CWC_FILE):
+        return {
+            "status": "success",
+            "message": "CWC CSV file found",
+            "file": CWC_FILE
+        }
+
+    return {
+        "status": "error",
+        "message": "CWC CSV file not found",
+        "file": CWC_FILE
+    }
+def read_cwc_data():
+
+    if not os.path.exists(CWC_FILE):
+        raise FileNotFoundError("CWC CSV file not found.")
+
+    records = []
+
+    with open(
+        CWC_FILE,
+        "r",
+        encoding="utf-8-sig"
+    ) as file:
+
+        reader = csv.DictReader(file)
+
+        for row in reader:
+
+            try:
+                record = {
+                    "station": row["Station"],
+                    "state": row["State"],
+                    "district": row["District"],
+                    "tehsil": row["Tehsil"],
+                    "river": row["River"],
+                    "basin": row["Basin"],
+                    "latitude": float(row["Latitude"]),
+                    "longitude": float(row["Longitude"]),
+                    "water_level": float(
+                        row[
+                            "River Water Level Telemetry Hourly (meter)"
+                        ]
+                    ),
+                    "time": row["Data Acquisition Time"]
+                }
+
+                records.append(record)
+
+            except (ValueError, KeyError, TypeError):
+                continue
+
+    return records
+def calculate_distance(lat1, lon1, lat2, lon2):
+
+    radius = 6371.0
+
+    lat1 = math.radians(lat1)
+    lon1 = math.radians(lon1)
+
+    lat2 = math.radians(lat2)
+    lon2 = math.radians(lon2)
+
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    a = (
+        math.sin(dlat / 2) ** 2
+        +
+        math.cos(lat1)
+        * math.cos(lat2)
+        * math.sin(dlon / 2) ** 2
+    )
+
+    c = 2 * math.atan2(
+        math.sqrt(a),
+        math.sqrt(1 - a)
+    )
+
+    return radius * c
+def find_nearest_cwc_station(latitude, longitude):
+
+    records = read_cwc_data()
+
+    if not records:
+        raise ValueError("No CWC records available.")
+
+    latitude = float(latitude)
+    longitude = float(longitude)
+
+    stations = {}
+
+    # Keep only one location for each station
+    for record in records:
+
+        station = record["station"]
+
+        if station not in stations:
+
+            stations[station] = {
+                "station": record["station"],
+                "state": record["state"],
+                "district": record["district"],
+                "tehsil": record["tehsil"],
+                "river": record["river"],
+                "basin": record["basin"],
+                "latitude": record["latitude"],
+                "longitude": record["longitude"]
+            }
+
+    nearest_station = None
+    nearest_distance = float("inf")
+
+    for station in stations.values():
+
+        distance = calculate_distance(
+            latitude,
+            longitude,
+            station["latitude"],
+            station["longitude"]
+        )
+
+        if distance < nearest_distance:
+
+            nearest_distance = distance
+            nearest_station = station
+
+    if nearest_station is None:
+        raise ValueError("No nearby CWC station found.")
+
+    nearest_station["distance_km"] = round(
+        nearest_distance,
+        2
+    )
+
+    return nearest_station
+def get_latest_cwc_reading(latitude, longitude):
+
+    records = read_cwc_data()
+
+    if not records:
+        raise ValueError("No CWC records available.")
+
+    nearest_station = find_nearest_cwc_station(
+        latitude,
+        longitude
+    )
+
+    station_name = nearest_station["station"]
+
+    station_records = [
+        record
+        for record in records
+        if record["station"] == station_name
+    ]
+
+    if not station_records:
+        raise ValueError(
+            "No readings found for nearest CWC station."
+        )
+
+    # Sort readings by date and time
+    station_records.sort(
+        key=lambda record: datetime.strptime(
+            record["time"],
+            "%d-%m-%Y %H:%M"
+        )
+    )
+
+    latest = station_records[-1]
+
+    return {
+        "station": nearest_station["station"],
+        "district": nearest_station["district"],
+        "state": nearest_station["state"],
+        "river": nearest_station["river"],
+        "basin": nearest_station["basin"],
+        "tehsil": nearest_station["tehsil"],
+        "latitude": nearest_station["latitude"],
+        "longitude": nearest_station["longitude"],
+        "distance_km": nearest_station["distance_km"],
+        "latest_time": latest["time"],
+        "water_level": latest["water_level"]
+    }
+def get_cwc_trend(latitude, longitude):
+
+    records = read_cwc_data()
+
+    if not records:
+        raise ValueError("No CWC records available.")
+
+    nearest_station = find_nearest_cwc_station(
+        latitude,
+        longitude
+    )
+
+    station_name = nearest_station["station"]
+
+    station_records = [
+        record
+        for record in records
+        if record["station"] == station_name
+    ]
+
+    if len(station_records) < 2:
+        raise ValueError(
+            "Not enough readings for this CWC station."
+        )
+
+    # Convert time strings into datetime objects
+    for record in station_records:
+
+        record["datetime"] = datetime.strptime(
+            record["time"],
+            "%d-%m-%Y %H:%M"
+        )
+
+    # Sort oldest → newest
+    station_records.sort(
+        key=lambda record: record["datetime"]
+    )
+
+    latest = station_records[-1]
+
+    # Only examine readings from the recent 24-hour period
+    recent_records = [
+        record
+        for record in station_records
+        if (
+            latest["datetime"] - record["datetime"]
+        ).total_seconds() <= 24 * 60 * 60
+    ]
+
+    # Remove suspicious sudden jumps
+    valid_records = []
+
+    for record in recent_records:
+
+        if not valid_records:
+
+            valid_records.append(record)
+            continue
+
+        previous = valid_records[-1]
+
+        difference = abs(
+            record["water_level"]
+            - previous["water_level"]
+        )
+
+        if difference <= 5:
+
+            valid_records.append(record)
+
+    # We need at least two recent valid readings
+    if len(valid_records) < 2:
+
+        return {
+            "station": station_name,
+            "latest_time": latest["time"],
+            "latest_water_level": latest["water_level"],
+            "trend": "Insufficient recent data",
+            "difference": None,
+            "previous_time": None,
+            "previous_water_level": None,
+            "data_quality_note": (
+                "There are not enough valid readings "
+                "within the last 24 hours to calculate "
+                "a reliable trend."
+            )
+        }
+
+    latest_valid = valid_records[-1]
+    previous_valid = valid_records[-2]
+
+    latest_level = latest_valid["water_level"]
+    previous_level = previous_valid["water_level"]
+
+    difference = latest_level - previous_level
+
+    if difference > 0.01:
+
+        trend = "Rising"
+
+    elif difference < -0.01:
+
+        trend = "Falling"
+
+    else:
+
+        trend = "Steady"
+
+    return {
+        "station": station_name,
+        "latest_time": latest_valid["time"],
+        "latest_water_level": latest_level,
+        "previous_time": previous_valid["time"],
+        "previous_water_level": previous_level,
+        "difference": round(difference, 3),
+        "trend": trend,
+        "data_quality_note": (
+            "Trend calculated using valid readings "
+            "from the last 24 hours."
+        )
+    }
+# =========================================================
+# CWC HISTORICAL BASELINE
+# =========================================================
+
+# =========================================================
+# CWC HISTORICAL BASELINE - CLEAN VERSION
+# =========================================================
+
+def get_cwc_station_baseline(latitude, longitude):
+
+    station = find_nearest_cwc_station(latitude, longitude)
+
+    if not station:
+        return {
+            "status": "error",
+            "message": "No nearby CWC station found"
+        }
+
+    station_name = station["station"]
+
+    records = read_cwc_data()
+
+    station_records = [
+        r for r in records
+        if r["station"] == station_name
+    ]
+
+    if not station_records:
+        return {
+            "status": "error",
+            "message": "No water-level data found for this station"
+        }
+
+    # -----------------------------------------------------
+    # Convert water levels to valid numbers
+    # -----------------------------------------------------
+
+    valid_records = []
+
+    for record in station_records:
+
+        try:
+            value = float(record["water_level"])
+
+            # Ignore NaN and infinity
+            if math.isnan(value) or math.isinf(value):
+                continue
+
+            valid_records.append({
+                **record,
+                "numeric_level": value
+            })
+
+        except (ValueError, TypeError):
+            continue
+
+    if not valid_records:
+        return {
+            "status": "error",
+            "message": "No valid water-level values found"
+        }
+
+    # -----------------------------------------------------
+    # Sort records by time
+    # -----------------------------------------------------
+
+    valid_records.sort(
+        key=lambda r: datetime.strptime(
+            r["time"],
+            "%d-%m-%Y %H:%M"
+        )
+    )
+
+    # -----------------------------------------------------
+    # Remove obvious abnormal jumps
+    #
+    # This is a DATA QUALITY filter.
+    # It is NOT a flood threshold.
+    # -----------------------------------------------------
+
+    clean_records = []
+
+    previous_level = None
+
+    for record in valid_records:
+
+        level = record["numeric_level"]
+
+        if previous_level is not None:
+
+            difference = abs(
+                level - previous_level
+            )
+
+            # Ignore extremely large sudden jumps
+            if difference > 5:
+                continue
+
+        clean_records.append(record)
+
+        previous_level = level
+
+    if not clean_records:
+        return {
+            "status": "error",
+            "message": "No clean CWC readings available"
+        }
+
+    # -----------------------------------------------------
+    # Extract clean water levels
+    # -----------------------------------------------------
+
+    water_levels = [
+        r["numeric_level"]
+        for r in clean_records
+    ]
+
+    water_levels.sort()
+
+    # -----------------------------------------------------
+    # Basic statistics
+    # -----------------------------------------------------
+
+    minimum = min(water_levels)
+    maximum = max(water_levels)
+
+    average = (
+        sum(water_levels) /
+        len(water_levels)
+    )
+
+    # -----------------------------------------------------
+    # Percentile function
+    # -----------------------------------------------------
+
+    def percentile(values, percentage):
+
+        index = (
+            (len(values) - 1)
+            * percentage
+        )
+
+        lower = int(index)
+
+        upper = min(
+            lower + 1,
+            len(values) - 1
+        )
+
+        weight = index - lower
+
+        return (
+            values[lower]
+            +
+            (
+                values[upper]
+                -
+                values[lower]
+            )
+            * weight
+        )
+
+    percentile_90 = percentile(
+        water_levels,
+        0.90
+    )
+
+    percentile_95 = percentile(
+        water_levels,
+        0.95
+    )
+
+    # -----------------------------------------------------
+    # Latest clean reading
+    # -----------------------------------------------------
+
+    latest_record = max(
+        clean_records,
+        key=lambda r: datetime.strptime(
+            r["time"],
+            "%d-%m-%Y %H:%M"
+        )
+    )
+
+    latest_level = latest_record[
+        "numeric_level"
+    ]
+
+    return {
+
+        "status": "success",
+
+        "station": station_name,
+
+        "river": station["river"],
+
+        "district": station["district"],
+
+        "state": station["state"],
+
+        "distance_km": station[
+            "distance_km"
+        ],
+
+        "total_readings": len(
+            water_levels
+        ),
+
+        "minimum_level": round(
+            minimum,
+            3
+        ),
+
+        "maximum_level": round(
+            maximum,
+            3
+        ),
+
+        "average_level": round(
+            average,
+            3
+        ),
+
+        "percentile_90": round(
+            percentile_90,
+            3
+        ),
+
+        "percentile_95": round(
+            percentile_95,
+            3
+        ),
+
+        "latest_level": round(
+            latest_level,
+            3
+        ),
+
+        "latest_time": latest_record[
+            "time"
+        ]
+    }
+def calculate_cwc_historical_score(latitude, longitude):
+
+    baseline = get_cwc_station_baseline(
+        latitude,
+        longitude
+    )
+
+    if baseline.get("status") != "success":
+        return baseline
+
+    latest = baseline["latest_level"]
+    p90 = baseline["percentile_90"]
+    p95 = baseline["percentile_95"]
+    minimum = baseline["minimum_level"]
+
+    # Historical water-level score
+    if latest <= minimum:
+        score = 10
+
+    elif latest <= p90:
+
+        # Scale between minimum and 90th percentile
+        score = 10 + (
+            (latest - minimum)
+            /
+            (p90 - minimum)
+        ) * 60
+
+    elif latest <= p95:
+
+        # 90th to 95th percentile
+        score = 70 + (
+            (latest - p90)
+            /
+            (p95 - p90)
+        ) * 15
+
+    else:
+
+        # Above 95th percentile
+        score = 85
+
+        if latest > p95:
+            extra = (
+                (latest - p95)
+                /
+                max(p95 - minimum, 0.001)
+            ) * 15
+
+            score += extra
+
+    score = round(
+        max(0, min(100, score))
+    )
+
+    if score >= 85:
+        level = "VERY HIGH"
+    elif score >= 70:
+        level = "HIGH"
+    elif score >= 40:
+        level = "MEDIUM"
+    else:
+        level = "LOW"
+
+    return {
+        "status": "success",
+
+        "station": baseline["station"],
+        "river": baseline["river"],
+        "district": baseline["district"],
+        "state": baseline["state"],
+
+        "latest_level": baseline["latest_level"],
+        "latest_time": baseline["latest_time"],
+
+        "minimum_level": baseline["minimum_level"],
+        "average_level": baseline["average_level"],
+        "percentile_90": baseline["percentile_90"],
+        "percentile_95": baseline["percentile_95"],
+
+        "cwc_score": score,
+        "cwc_level": level,
+
+        "explanation":
+            "Score is based on the latest water level "
+            "compared with the station's historical "
+            "water-level distribution."
+    }
+def calculate_final_pre_disaster_risk(
+    imd_score,
+    cwc_score
+):
+
+    final_score = (
+        (imd_score * 0.60)
+        +
+        (cwc_score * 0.40)
+    )
+
+    final_score = round(
+        max(0, min(100, final_score))
+    )
+
+    if final_score >= 75:
+        risk_level = "CRITICAL"
+
+    elif final_score >= 50:
+        risk_level = "HIGH"
+
+    elif final_score >= 25:
+        risk_level = "MEDIUM"
+
+    else:
+        risk_level = "LOW"
+
+    return {
+        "final_score": final_score,
+        "risk_level": risk_level,
+        "imd_score": round(imd_score),
+        "cwc_score": round(cwc_score),
+        "explanation": (
+            "Final score combines IMD weather warning "
+            "information with the CWC historical "
+            "water-level score."
+        )
+    }
+@app.route("/api/pre-disaster/final-risk")
+def final_pre_disaster_risk():
+
+    imd_result = calculate_imd_risk_score()
+
+    if imd_result.get("status") != "success":
+        return jsonify(imd_result), 500
+
+    cwc_result = calculate_cwc_historical_score(
+        11.0168,
+        76.9558
+    )
+
+    if cwc_result.get("status") != "success":
+        return jsonify(cwc_result), 500
+
+    final_result = calculate_final_pre_disaster_risk(
+        imd_result["imd_score"],
+        cwc_result["cwc_score"]
+    )
+
+    return jsonify({
+        **final_result,
+        "imd": imd_result,
+        "cwc": cwc_result
+    })
+@app.route("/api/pre-disaster/test-final")
+def test_final_risk():
+
+    imd_score = request.args.get(
+        "imd_score",
+        type=float
+    )
+
+    cwc_score = request.args.get(
+        "cwc_score",
+        type=float
+    )
+
+    if imd_score is None or cwc_score is None:
+        return jsonify({
+            "status": "error",
+            "message":
+                "IMD score and CWC score are required"
+        }), 400
+
+    result = calculate_final_pre_disaster_risk(
+        imd_score,
+        cwc_score
+    )
+
+    return jsonify(result)
+@app.route("/api/pre-disaster/cwc/risk")
+def cwc_risk():
+
+    latitude = request.args.get(
+        "latitude",
+        type=float
+    )
+
+    longitude = request.args.get(
+        "longitude",
+        type=float
+    )
+
+    if latitude is None or longitude is None:
+        return jsonify({
+            "status": "error",
+            "message":
+                "Latitude and longitude are required"
+        }), 400
+
+    return jsonify(
+        calculate_cwc_historical_score(
+            latitude,
+            longitude
+        )
+    )
+@app.route("/api/pre-disaster/cwc/baseline")
+def cwc_baseline():
+
+    latitude = request.args.get("latitude", type=float)
+    longitude = request.args.get("longitude", type=float)
+
+    if latitude is None or longitude is None:
+        return jsonify({
+            "status": "error",
+            "message": "Latitude and longitude are required"
+        }), 400
+
+    return jsonify(
+        get_cwc_station_baseline(latitude, longitude)
+    )
+@app.route("/api/pre-disaster/cwc/trend")
+def cwc_trend_test():
+
+    latitude = request.args.get("latitude")
+    longitude = request.args.get("longitude")
+
+    if not latitude or not longitude:
+
+        return jsonify({
+            "status": "error",
+            "message": "Latitude and longitude are required."
+        }), 400
+
+    try:
+
+        result = get_cwc_trend(
+            latitude,
+            longitude
+        )
+
+        return jsonify({
+            "status": "success",
+            "cwc_trend": result
+        })
+
+    except Exception as error:
+
+        return jsonify({
+            "status": "error",
+            "message": str(error)
+        }), 500
+@app.route("/api/pre-disaster/cwc/latest")
+def cwc_latest_test():
+
+    latitude = request.args.get("latitude")
+    longitude = request.args.get("longitude")
+
+    if not latitude or not longitude:
+
+        return jsonify({
+            "status": "error",
+            "message": "Latitude and longitude are required."
+        }), 400
+
+    try:
+
+        result = get_latest_cwc_reading(
+            latitude,
+            longitude
+        )
+
+        return jsonify({
+            "status": "success",
+            "cwc": result
+        })
+
+    except Exception as error:
+
+        return jsonify({
+            "status": "error",
+            "message": str(error)
+        }), 500
+@app.route("/api/pre-disaster/cwc/nearest")
+def cwc_nearest_test():
+
+    latitude = request.args.get("latitude")
+    longitude = request.args.get("longitude")
+
+    if not latitude or not longitude:
+
+        return jsonify({
+            "status": "error",
+            "message": "Latitude and longitude are required."
+        }), 400
+
+    try:
+
+        station = find_nearest_cwc_station(
+            latitude,
+            longitude
+        )
+
+        return jsonify({
+            "status": "success",
+            "station": station
+        })
+
+    except Exception as error:
+
+        return jsonify({
+            "status": "error",
+            "message": str(error)
+        }), 500
+@app.route("/api/pre-disaster/cwc/columns")
+def cwc_columns():
+
+    records = read_cwc_data()
+
+    if not records:
+        return jsonify({
+            "status": "error",
+            "message": "No CWC records found"
+        })
+
+    return jsonify({
+        "status": "success",
+        "columns": list(records[0].keys()),
+        "sample": records[0]
+    })
+@app.route("/api/pre-disaster/cwc/data-test")
+def cwc_data_test():
+
+    try:
+
+        records = read_cwc_data()
+
+        return jsonify({
+            "status": "success",
+            "total_records": len(records),
+            "first_record": records[0] if records else None
+        })
+
+    except Exception as error:
+
+        return jsonify({
+            "status": "error",
+            "message": str(error)
+        }), 500
+@app.route("/api/pre-disaster/cwc/test")
+def cwc_test():
+
+    return jsonify(test_cwc_file())
+@app.route("/api/pre-disaster/imd/<int:district_id>")
+def get_imd_warning(district_id):
+
+    url = (
+        "https://mausam.imd.gov.in/api/"
+        "warnings_district_api.php"
+        f"?id={district_id}"
+    )
+
+    try:
+        response = requests.get(
+            url,
+            timeout=15
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        return jsonify({
+            "source": "India Meteorological Department",
+            "district_id": district_id,
+            "data": data
+        })
+
+    except Exception as e:
+
+        return jsonify({
+            "error": "Unable to retrieve IMD data.",
+            "details": str(e)
+        }), 502
+@app.route("/api/pre-disaster/risk")
+def generic_pre_disaster_risk():
+
+    district = request.args.get(
+        "district",
+        ""
+    ).strip().upper()
+
+    # Check district
+    if not district:
+        return jsonify({
+            "status": "error",
+            "message": "District is required"
+        }), 400
+
+    # Check supported district
+    if district not in DISTRICT_COORDINATES:
+        return jsonify({
+            "status": "error",
+            "message": "District is not supported",
+            "available_districts": sorted(
+                DISTRICT_COORDINATES.keys()
+            )
+        }), 400
+
+    # Get district coordinates
+    latitude, longitude = DISTRICT_COORDINATES[district]
+
+    # -------------------------
+    # IMD RISK
+    # -------------------------
+
+    imd_result = calculate_imd_district_score(
+        district
+    )
+
+    if imd_result.get("status") != "success":
+        return jsonify(imd_result), 500
+
+    # -------------------------
+    # CWC RISK
+    # -------------------------
+
+    cwc_result = calculate_cwc_historical_score(
+        latitude,
+        longitude
+    )
+
+    if cwc_result.get("status") != "success":
+        return jsonify({
+            "status": "error",
+            "message": "CWC data unavailable",
+            "district": district,
+            "imd": imd_result
+        }), 500
+
+    # -------------------------
+    # FINAL RISK
+    # -------------------------
+
+    final_result = calculate_final_pre_disaster_risk(
+        imd_result["imd_score"],
+        cwc_result["cwc_score"]
+    )
+
+    return jsonify({
+
+        "status": "success",
+
+        "district": district,
+
+        "location": {
+            "latitude": latitude,
+            "longitude": longitude
+        },
+
+        "imd": imd_result,
+
+        "cwc": cwc_result,
+
+        "final_score":
+            final_result["final_score"],
+
+        "risk_level":
+            final_result["risk_level"],
+
+        "explanation":
+            final_result["explanation"]
+    })
+# =========================================================
+# IMD DISTRICT WARNING TEST
+# =========================================================
+
+def get_imd_warning(district_name):
+
+    url = "https://api.imd.gov.in/api/v1/districtwarning"
+
+    try:
+
+        response = requests.get(
+            url,
+            timeout=15
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        # Search for requested district
+        if isinstance(data, list):
+
+            for item in data:
+
+                district = str(
+                    item.get("District", "")
+                ).strip().upper()
+
+                if district == district_name.strip().upper():
+
+                    return {
+                        "status": "success",
+                        "data": item
+                    }
+
+        return {
+            "status": "error",
+            "message":
+                f"{district_name} not found in IMD data"
+        }
+
+    except Exception as e:
+
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+# =========================================================
+# IMD PUBLIC DISTRICT WARNING TEST
+# =========================================================
+
+# =========================================================
+# IMD PUBLIC PAGE - FIND COIMBATORE DATA
+# =========================================================
+
+# =========================================================
+# IMD PUBLIC DISTRICT WARNING - COIMBATORE
+# =========================================================
+
+# =========================================================
+# IMD PUBLIC DISTRICT WARNING - COIMBATORE
+# =========================================================
+
+# =========================================================
+# IMD PUBLIC DISTRICT WARNING - COIMBATORE
+# =========================================================
+
+def get_imd_coimbatore_warning():
+
+    url = "https://mausam.imd.gov.in/responsive/districtWiseWarning.php"
+
+    try:
+
+        response = requests.get(
+            url,
+            timeout=20,
+            headers={
+                "User-Agent": "Mozilla/5.0"
+            }
+        )
+
+        response.raise_for_status()
+
+        html = response.text
+
+        # -------------------------------------------------
+        # Find only the COIMBATORE object
+        # -------------------------------------------------
+
+        pattern = (
+            r'\{\s*'
+            r'"title"\s*:\s*"COIMBATORE".*?'
+            r'"id"\s*:\s*"([^"]+)".*?'
+            r'"color"\s*:\s*"([^"]+)".*?'
+            r'"balloonText"\s*:\s*"(.*?)"'
+            r'\s*\}'
+        )
+
+        match = re.search(
+            pattern,
+            html,
+            re.DOTALL
+        )
+
+        if not match:
+
+            return {
+                "status": "error",
+                "message":
+                    "Coimbatore warning data not found"
+            }
+
+        district_id = match.group(1)
+
+        color = match.group(2)
+
+        balloon_text = match.group(3)
+
+        # -------------------------------------------------
+        # Extract date
+        # -------------------------------------------------
+
+        date_match = re.search(
+            r"Date:\s*([^:]+)",
+            balloon_text
+        )
+
+        if date_match:
+
+            warning_date = (
+                date_match.group(1).strip()
+            )
+
+        else:
+
+            warning_date = None
+
+        # -------------------------------------------------
+        # Extract warning text
+        # -------------------------------------------------
+
+        warnings = []
+
+        warning_matches = re.findall(
+            r"<p>(.*?)<\\/p>",
+            balloon_text,
+            re.DOTALL
+        )
+
+        for warning in warning_matches:
+
+            # Remove HTML tags
+            warning = re.sub(
+                r"<.*?>",
+                "",
+                warning
+            )
+
+            # Remove escaped slash
+            warning = warning.replace(
+                "\\/",
+                "/"
+            )
+
+            warning = warning.strip()
+
+            # Ignore update information
+            if warning.startswith(
+                "Updated on:"
+            ):
+                continue
+
+            if warning and warning not in warnings:
+
+                warnings.append(warning)
+
+        # -------------------------------------------------
+        # Return Coimbatore data
+        # -------------------------------------------------
+
+        return {
+
+            "status": "success",
+
+            "district": "COIMBATORE",
+
+            "district_id": district_id,
+
+            "date": warning_date,
+
+            "color": color,
+
+            "warnings": warnings
+
+        }
+
+    except Exception as e:
+
+        return {
+
+            "status": "error",
+
+            "message": str(e)
+
+        }
+def get_imd_district_warning(district_name):
+
+    try:
+        response = requests.get(
+            "https://mausam.imd.gov.in/responsive/districtWiseWarning.php",
+            timeout=15
+        )
+
+        if response.status_code != 200:
+            return {
+                "status": "error",
+                "message": "Unable to access IMD warning page"
+            }
+
+        html = response.text
+
+        district_name = district_name.strip().upper()
+
+        pattern = (
+            r'\{\s*'
+            r'"title"\s*:\s*"' +
+            re.escape(district_name) +
+            r'".*?'
+            r'"id"\s*:\s*"([^"]+)".*?'
+            r'"color"\s*:\s*"([^"]+)".*?'
+            r'"balloonText"\s*:\s*"(.*?)"'
+            r'\s*\}'
+        )
+
+        match = re.search(
+            pattern,
+            html,
+            re.DOTALL
+        )
+
+        if not match:
+            return {
+                "status": "error",
+                "message": (
+                    "District not found in IMD warning page"
+                ),
+                "district": district_name
+            }
+
+        district_id = match.group(1)
+        color = match.group(2)
+        balloon_text = match.group(3)
+
+        date_match = re.search(
+            r'Date:\s*(\d{4}-\d{2}-\d{2})',
+            balloon_text
+        )
+
+        date = (
+            date_match.group(1)
+            if date_match
+            else None
+        )
+
+        warning_matches = re.findall(
+            r"<p>(.*?)<\\/p>",
+            balloon_text,
+            re.DOTALL
+        )
+
+        warnings = []
+
+        for warning in warning_matches:
+
+            warning = re.sub(
+                r"<.*?>",
+                "",
+                warning
+            )
+
+            warning = (
+                warning
+                .replace("\\/", "/")
+                .replace("&amp;", "&")
+                .strip()
+            )
+
+            if (
+                warning
+                and not warning.startswith("Updated on:")
+                and warning not in warnings
+            ):
+                warnings.append(warning)
+
+        return {
+            "status": "success",
+            "district": district_name,
+            "district_id": district_id,
+            "date": date,
+            "imd_color": color,
+            "warnings": warnings
+        }
+
+    except Exception as e:
+
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+def calculate_imd_risk_score():
+
+    imd_data = get_imd_coimbatore_warning()
+
+    if imd_data.get("status") != "success":
+        return imd_data
+
+    color = imd_data.get("color", "").upper()
+    warnings = imd_data.get("warnings", [])
+
+    score = 0
+
+    # IMD warning color
+    if color == "#FF0000":
+        score = 95
+
+    elif color == "#FFA500":
+        score = 75
+
+    elif color == "#FFFF00":
+        score = 50
+
+    elif color == "#00FF00":
+        score = 10
+
+    else:
+        score = 0
+
+    # Increase score if warning contains severe weather
+    warning_text = " ".join(warnings).lower()
+
+    if "extremely heavy" in warning_text:
+        score += 25
+
+    elif "very heavy" in warning_text:
+        score += 20
+
+    elif "heavy rain" in warning_text:
+        score += 10
+
+    elif "thunderstorm" in warning_text:
+        score += 5
+
+    score = min(score, 100)
+
+    if score >= 75:
+        level = "CRITICAL"
+
+    elif score >= 50:
+        level = "HIGH"
+
+    elif score >= 25:
+        level = "MEDIUM"
+
+    else:
+        level = "LOW"
+
+    return {
+        "status": "success",
+        "district": imd_data["district"],
+        "district_id": imd_data["district_id"],
+        "date": imd_data["date"],
+        "warnings": warnings,
+        "imd_color": color,
+        "imd_score": score,
+        "imd_level": level
+    }
+def calculate_imd_district_score(district_name):
+
+    imd_data = get_imd_district_warning(
+        district_name
+    )
+
+    if imd_data.get("status") != "success":
+        return imd_data
+
+    color = imd_data.get(
+        "imd_color",
+        ""
+    ).upper()
+
+    warnings = imd_data.get(
+        "warnings",
+        []
+    )
+
+    # -------------------------
+    # IMD COLOR SCORE
+    # -------------------------
+
+    if color == "#FF0000":
+        score = 95
+
+    elif color == "#FFA500":
+        score = 75
+
+    elif color == "#FFFF00":
+        score = 50
+
+    elif color == "#00FF00":
+        score = 10
+
+    else:
+        score = 0
+
+    # -------------------------
+    # WARNING SEVERITY
+    # -------------------------
+
+    warning_text = " ".join(
+        warnings
+    ).lower()
+
+    if "extremely heavy" in warning_text:
+        score += 25
+
+    elif "very heavy" in warning_text:
+        score += 20
+
+    elif "heavy rain" in warning_text:
+        score += 10
+
+    elif "thunderstorm" in warning_text:
+        score += 5
+
+    score = min(score, 100)
+
+    # -------------------------
+    # RISK LEVEL
+    # -------------------------
+
+    if score >= 75:
+        level = "CRITICAL"
+
+    elif score >= 50:
+        level = "HIGH"
+
+    elif score >= 25:
+        level = "MEDIUM"
+
+    else:
+        level = "LOW"
+
+    return {
+        **imd_data,
+        "imd_score": score,
+        "imd_level": level
+    }
+
+@app.route("/api/pre-disaster/imd/risk")
+def imd_risk():
+
+    return jsonify(
+        calculate_imd_risk_score()
+    )
+@app.route("/api/pre-disaster/imd/coimbatore")
+def imd_coimbatore():
+
+    return jsonify(
+        get_imd_coimbatore_warning()
+    )
+
+
+@app.route("/api/pre-disaster/imd/test")
+def imd_test():
+
+    district = request.args.get(
+        "district",
+        default="COIMBATORE"
+    )
+
+    result = get_imd_warning(
+        district
+    )
+
+    return jsonify(result)   
 def calculate_match(resource, req):
     score = 0
 

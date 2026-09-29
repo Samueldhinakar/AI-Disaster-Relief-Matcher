@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import LiveDisasterMap from "./LiveDisasterMap";
+import PreDisasterDashboard from "./PreDisasterDashboard";
 import {
   AlertTriangle, BrainCircuit, CheckCircle2, Droplets, HeartPulse,
   MapPin, Package, RefreshCw, Shield, Truck, Users, Utensils,
@@ -239,6 +240,12 @@ function App() {
           >
             Dashboard
           </button>
+          <button
+  className={tab === "predisaster" ? "active" : ""}
+  onClick={() => setTab("predisaster")}
+>
+  🌧️ Pre-Disaster Dashboard
+</button>
 
           <button
             className={tab === "donor" ? "active" : ""}
@@ -263,6 +270,18 @@ function App() {
           <button onClick={() => setTab("map")}>
           🗺️ Live Disaster Map
           </button>
+          <button
+  className={
+    tab === "predisaster"
+      ? "active"
+      : ""
+  }
+  onClick={() =>
+    setTab("predisaster")
+  }
+>
+  🌧️ AI Risk Assessment
+</button>
           <button
   className={tab === "inventory" ? "active" : ""}
   onClick={() => {
@@ -558,6 +577,9 @@ function App() {
                   requests={requests}
               />
          )}
+         {tab === "predisaster" && (
+  <PreDisasterDashboard />
+)}
          {tab === "inventory" && (
   <InventoryPage resources={resources} />
 )}
