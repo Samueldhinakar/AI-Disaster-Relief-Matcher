@@ -3,10 +3,11 @@ from flask import Flask, request, jsonify, send_from_directory
 import os
 from flask_cors import CORS
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 import csv
 import math
+import xml.etree.ElementTree as ET
 
 app = Flask(__name__)
 CORS(app)
@@ -271,6 +272,7 @@ def test_cwc_file():
         "message": "CWC CSV file not found",
         "file": CWC_FILE
     }
+
 def read_cwc_data():
 
     if not os.path.exists(CWC_FILE):
@@ -896,40 +898,93 @@ def calculate_cwc_historical_score(latitude, longitude):
     }
 def calculate_final_pre_disaster_risk(
     imd_score,
-    cwc_score
+    cwc_score,
+    sachet_score=0,
+    sachet_alert_found=False
 ):
 
-    final_score = (
+    # Base risk from IMD + CWC
+    base_score = (
         (imd_score * 0.60)
         +
         (cwc_score * 0.40)
     )
 
+    base_score = round(
+        max(
+            0,
+            min(
+                100,
+                base_score
+            )
+        )
+    )
+
+    # If an active SACHET alert exists,
+    # do not allow the official alert signal
+    # to be diluted by the base score.
+    if sachet_alert_found:
+
+        final_score = max(
+            base_score,
+            sachet_score
+        )
+
+    else:
+
+        final_score = base_score
+
     final_score = round(
-        max(0, min(100, final_score))
+        max(
+            0,
+            min(
+                100,
+                final_score
+            )
+        )
     )
 
     if final_score >= 75:
+
         risk_level = "CRITICAL"
 
     elif final_score >= 50:
+
         risk_level = "HIGH"
 
     elif final_score >= 25:
+
         risk_level = "MEDIUM"
 
     else:
+
         risk_level = "LOW"
 
     return {
-        "final_score": final_score,
-        "risk_level": risk_level,
-        "imd_score": round(imd_score),
-        "cwc_score": round(cwc_score),
+
+        "base_score":
+            base_score,
+
+        "sachet_score":
+            round(sachet_score),
+
+        "sachet_alert_found":
+            sachet_alert_found,
+
+        "final_score":
+            final_score,
+
+        "risk_level":
+            risk_level,
+
         "explanation": (
-            "Final score combines IMD weather warning "
-            "information with the CWC historical "
-            "water-level score."
+            "Base risk combines IMD weather "
+            "warning information and CWC "
+            "historical water-level data. "
+            "When an active SACHET alert is "
+            "present, the final score uses the "
+            "higher of the base risk and the "
+            "SACHET alert score."
         )
     }
 @app.route("/api/pre-disaster/final-risk")
@@ -982,6 +1037,1440 @@ def test_final_risk():
         imd_score,
         cwc_score
     )
+
+    return jsonify(result)
+def get_sachet_alerts(district_name=None):
+
+    feed_url = (
+        "https://sachet.ndma.gov.in/"
+        "cap_public_website/rss/rss_india.xml"
+    )
+
+    try:
+
+        response = requests.get(
+            feed_url,
+            timeout=20
+        )
+
+        if response.status_code != 200:
+            return {
+                "status": "error",
+                "message": (
+                    "Unable to access SACHET RSS feed"
+                ),
+                "http_status": response.status_code
+            }
+
+        root = ET.fromstring(
+            response.content
+        )
+
+        alerts = []
+
+        district_filter = None
+
+        if district_name:
+
+            district_filter = (
+                district_name
+                .strip()
+                .lower()
+            )
+
+        for item in root.findall(".//item"):
+
+            title_element = item.find("title")
+            link_element = item.find("link")
+            date_element = item.find("pubDate")
+
+            title = (
+                title_element.text.strip()
+                if title_element is not None
+                and title_element.text
+                else ""
+            )
+
+            link = (
+                link_element.text.strip()
+                if link_element is not None
+                and link_element.text
+                else ""
+            )
+
+            published = (
+                date_element.text.strip()
+                if date_element is not None
+                and date_element.text
+                else ""
+            )
+
+            # If no district was selected,
+            # return the RSS alerts normally.
+            if not district_filter:
+
+                alerts.append({
+                    "title": title,
+                    "published": published,
+                    "link": link
+                })
+
+                continue
+
+            # A CAP link is required for
+            # accurate district matching.
+            if not link:
+                continue
+
+            cap_result = get_sachet_cap_alert(
+                link
+            )
+
+            if cap_result.get("status") != "success":
+                continue
+
+            area = cap_result.get(
+                "area",
+                ""
+            )
+
+            headline = cap_result.get(
+                "headline",
+                ""
+            )
+
+            # Search in multiple CAP fields.
+            searchable_text = (
+                area + " "
+                + headline + " "
+                + title
+            ).lower()
+
+            if district_filter not in searchable_text:
+                continue
+
+            alerts.append({
+
+                "title": title,
+
+                "published": published,
+
+                "link": link,
+
+                "identifier":
+                    cap_result.get(
+                        "identifier",
+                        ""
+                    ),
+
+                "sender":
+                    cap_result.get(
+                        "sender",
+                        ""
+                    ),
+
+                "sent":
+                    cap_result.get(
+                        "sent",
+                        ""
+                    ),
+
+                "alert_status":
+                    cap_result.get(
+                        "alert_status",
+                        ""
+                    ),
+
+                "message_type":
+                    cap_result.get(
+                        "message_type",
+                        ""
+                    ),
+
+                "event":
+                    cap_result.get(
+                        "event",
+                        ""
+                    ),
+
+                "urgency":
+                    cap_result.get(
+                        "urgency",
+                        ""
+                    ),
+
+                "severity":
+                    cap_result.get(
+                        "severity",
+                        ""
+                    ),
+
+                "certainty":
+                    cap_result.get(
+                        "certainty",
+                        ""
+                    ),
+
+                "effective":
+                    cap_result.get(
+                        "effective",
+                        ""
+                    ),
+
+                "onset":
+                    cap_result.get(
+                        "onset",
+                        ""
+                    ),
+
+                "expires":
+                    cap_result.get(
+                        "expires",
+                        ""
+                    ),
+
+                "headline":
+                    headline,
+
+                "instruction":
+                    cap_result.get(
+                        "instruction",
+                        ""
+                    ),
+
+                "area":
+                    area,
+
+                "source_url":
+                    cap_result.get(
+                        "source_url",
+                        link
+                    )
+            })
+
+        return {
+            "status": "success",
+            "source": "SACHET - NDMA",
+            "feed_url": feed_url,
+            "district_filter": district_name,
+            "alert_count": len(alerts),
+            "alert_found": len(alerts) > 0,
+            "alerts": alerts
+        }
+
+    except ET.ParseError:
+
+        return {
+            "status": "error",
+            "message": (
+                "SACHET returned invalid XML"
+            )
+        }
+
+    except Exception as e:
+
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+@app.route("/api/pre-disaster/sachet/alerts")
+def sachet_all_alerts():
+
+    feed_url = (
+        "https://sachet.ndma.gov.in/"
+        "cap_public_website/rss/rss_india.xml"
+    )
+
+    try:
+
+        response = requests.get(
+            feed_url,
+            timeout=20
+        )
+
+        if response.status_code != 200:
+            return jsonify({
+                "status": "error",
+                "message": "Unable to access SACHET RSS feed",
+                "http_status": response.status_code
+            }), 500
+
+        root = ET.fromstring(
+            response.content
+        )
+
+        alerts = []
+
+        # Supported Tamil Nadu districts
+        tamil_nadu_districts = {
+            "Ariyalur",
+            "Chengalpattu",
+            "Chennai",
+            "Coimbatore",
+            "Cuddalore",
+            "Dharmapuri",
+            "Dindigul",
+            "Erode",
+            "Kallakurichi",
+            "Kanchipuram",
+            "Kanniyakumari",
+            "Karur",
+            "Krishnagiri",
+            "Madurai",
+            "Mayiladuthurai",
+            "Nagapattinam",
+            "Namakkal",
+            "Perambalur",
+            "Pudukkottai",
+            "Ramanathapuram",
+            "Ranipet",
+            "Salem",
+            "Sivaganga",
+            "Tenkasi",
+            "Thanjavur",
+            "The Nilgiris",
+            "Theni",
+            "Thoothukudi",
+            "Tiruchirappalli",
+            "Tirunelveli",
+            "Tirupathur",
+            "Tiruppur",
+            "Tiruvallur",
+            "Tiruvannamalai",
+            "Tiruvarur",
+            "Vellore",
+            "Viluppuram",
+            "Virudhunagar"
+        }
+
+        for item in root.findall(".//item"):
+
+            title_element = item.find("title")
+            link_element = item.find("link")
+            date_element = item.find("pubDate")
+
+            title = (
+                title_element.text.strip()
+                if title_element is not None
+                and title_element.text
+                else ""
+            )
+
+            link = (
+                link_element.text.strip()
+                if link_element is not None
+                and link_element.text
+                else ""
+            )
+
+            published = (
+                date_element.text.strip()
+                if date_element is not None
+                and date_element.text
+                else ""
+            )
+
+            if not link:
+                continue
+
+            cap_result = get_sachet_cap_alert(link)
+
+            if cap_result.get("status") != "success":
+                continue
+
+            # Get SACHET area and headline
+            area_text = cap_result.get(
+                "area",
+                ""
+            ).strip()
+
+            headline_text = cap_result.get(
+                "headline",
+                ""
+            ).strip()
+
+            # Search both area and headline
+            search_text = (
+                area_text
+                + " "
+                + headline_text
+            )
+
+            # Find only supported Tamil Nadu districts
+            affected_districts = []
+
+            for district in tamil_nadu_districts:
+
+                if district.lower() in search_text.lower():
+
+                    affected_districts.append(
+                        district
+                    )
+
+            alerts.append({
+                "title": title,
+                "published": published,
+                "link": link,
+
+                "identifier":
+                    cap_result.get(
+                        "identifier",
+                        ""
+                    ),
+
+                "sender":
+                    cap_result.get(
+                        "sender",
+                        ""
+                    ),
+
+                "sent":
+                    cap_result.get(
+                        "sent",
+                        ""
+                    ),
+
+                "alert_status":
+                    cap_result.get(
+                        "alert_status",
+                        ""
+                    ),
+
+                "message_type":
+                    cap_result.get(
+                        "message_type",
+                        ""
+                    ),
+
+                "event":
+                    cap_result.get(
+                        "event",
+                        ""
+                    ),
+
+                "urgency":
+                    cap_result.get(
+                        "urgency",
+                        ""
+                    ),
+
+                "severity":
+                    cap_result.get(
+                        "severity",
+                        ""
+                    ),
+
+                "certainty":
+                    cap_result.get(
+                        "certainty",
+                        ""
+                    ),
+
+                "effective":
+                    cap_result.get(
+                        "effective",
+                        ""
+                    ),
+
+                "onset":
+                    cap_result.get(
+                        "onset",
+                        ""
+                    ),
+
+                "expires":
+                    cap_result.get(
+                        "expires",
+                        ""
+                    ),
+
+                "headline":
+                    cap_result.get(
+                        "headline",
+                        ""
+                    ),
+
+                "description":
+                    cap_result.get(
+                        "description",
+                        ""
+                    ),
+
+                "instruction":
+                    cap_result.get(
+                        "instruction",
+                        ""
+                    ),
+
+                "area":
+                    cap_result.get(
+                        "area",
+                        ""
+                    ),
+
+                "affected_districts":
+                    affected_districts,
+
+                "source_url":
+                    cap_result.get(
+                        "source_url",
+                        link
+                    )
+            })
+
+        return jsonify({
+            "status": "success",
+            "source": "SACHET - NDMA",
+            "feed_url": feed_url,
+            "alert_count": len(alerts),
+            "alerts": alerts
+        })
+
+    except ET.ParseError:
+
+        return jsonify({
+            "status": "error",
+            "message": "SACHET returned invalid XML"
+        }), 500
+
+    except Exception as e:
+
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+def get_sachet_cap_alert(cap_url):
+
+    try:
+
+        response = requests.get(
+            cap_url,
+            timeout=20
+        )
+
+        if response.status_code != 200:
+            return {
+                "status": "error",
+                "message": "Unable to access SACHET CAP alert",
+                "http_status": response.status_code
+            }
+
+        root = ET.fromstring(
+            response.content
+        )
+
+        def get_text(path):
+
+            element = root.find(path)
+
+            if element is not None and element.text:
+                return element.text.strip()
+
+            return ""
+
+        identifier = get_text(
+            ".//{*}identifier"
+        )
+
+        sender = get_text(
+            ".//{*}sender"
+        )
+
+        sent = get_text(
+            ".//{*}sent"
+        )
+
+        alert_status = get_text(
+            ".//{*}status"
+        )
+
+        message_type = get_text(
+            ".//{*}msgType"
+        )
+
+        event = get_text(
+            ".//{*}event"
+        )
+
+        urgency = get_text(
+            ".//{*}urgency"
+        )
+
+        severity = get_text(
+            ".//{*}severity"
+        )
+
+        certainty = get_text(
+            ".//{*}certainty"
+        )
+
+        effective = get_text(
+            ".//{*}effective"
+        )
+
+        onset = get_text(
+            ".//{*}onset"
+        )
+
+        expires = get_text(
+            ".//{*}expires"
+        )
+
+        headline = get_text(
+            ".//{*}headline"
+        )
+
+        description = get_text(
+            ".//{*}description"
+        )
+
+        instruction = get_text(
+            ".//{*}instruction"
+        )
+
+        area = get_text(
+            ".//{*}areaDesc"
+        )
+
+        return {
+            "status": "success",
+            "identifier": identifier,
+            "sender": sender,
+            "sent": sent,
+            "alert_status": alert_status,
+            "message_type": message_type,
+            "event": event,
+            "urgency": urgency,
+            "severity": severity,
+            "certainty": certainty,
+            "effective": effective,
+            "onset": onset,
+            "expires": expires,
+            "headline": headline,
+            "description": description,
+            "instruction": instruction,
+            "area": area,
+            "source_url": cap_url
+        }
+
+    except ET.ParseError:
+
+        return {
+            "status": "error",
+            "message": "Invalid SACHET CAP XML"
+        }
+
+    except Exception as e:
+
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+def get_active_sachet_alerts(district_name):
+
+    district_filter = (
+        district_name
+        .strip()
+        .lower()
+    )
+
+    # Get SACHET alerts using the function
+    # we created in Step 1.
+    result = get_sachet_alerts(
+        district_name
+    )
+
+    if result.get("status") != "success":
+
+        return result
+
+    active_alerts = []
+
+    current_time = datetime.now(
+        timezone.utc
+    )
+
+    for alert in result.get(
+        "alerts",
+        []
+    ):
+
+        expires_text = alert.get(
+            "expires",
+            ""
+        )
+
+        effective_text = alert.get(
+            "effective",
+            ""
+        )
+
+        onset_text = alert.get(
+            "onset",
+            ""
+        )
+
+        alert_status = (
+            alert.get(
+                "alert_status",
+                ""
+            )
+            .strip()
+            .lower()
+        )
+
+        # Ignore alerts that are not Actual.
+        if (
+            alert_status
+            and alert_status != "actual"
+        ):
+            continue
+
+        # Convert SACHET timestamps.
+        expires_time = None
+
+        if expires_text:
+
+            try:
+
+                expires_time = (
+                    datetime.fromisoformat(
+                        expires_text
+                    )
+                )
+
+            except ValueError:
+
+                expires_time = None
+
+        effective_time = None
+
+        if effective_text:
+
+            try:
+
+                effective_time = (
+                    datetime.fromisoformat(
+                        effective_text
+                    )
+                )
+
+            except ValueError:
+
+                effective_time = None
+
+        onset_time = None
+
+        if onset_text:
+
+            try:
+
+                onset_time = (
+                    datetime.fromisoformat(
+                        onset_text
+                    )
+                )
+
+            except ValueError:
+
+                onset_time = None
+
+        # If expiry time exists and has passed,
+        # ignore the alert.
+        if (
+            expires_time is not None
+            and expires_time < current_time
+        ):
+            continue
+
+        # If effective time exists and the alert
+        # has not started yet, ignore it.
+        if (
+            effective_time is not None
+            and effective_time > current_time
+        ):
+            continue
+
+        # If onset exists and it is in the future,
+        # ignore it.
+        if (
+            onset_time is not None
+            and onset_time > current_time
+        ):
+            continue
+
+        active_alerts.append(alert)
+
+    return {
+        "status": "success",
+        "district": district_name,
+        "alert_found": (
+            len(active_alerts) > 0
+        ),
+        "alert_count": len(active_alerts),
+        "alerts": active_alerts
+    }
+def calculate_sachet_alert_score(
+    district_name
+):
+
+    result = get_active_sachet_alerts(
+        district_name
+    )
+
+    if result.get("status") != "success":
+        return result
+
+    active_alerts = result.get(
+        "alerts",
+        []
+    )
+
+    # No active alert
+    if not active_alerts:
+
+        return {
+            "status": "success",
+            "district": district_name,
+            "alert_found": False,
+            "alert_count": 0,
+            "sachet_score": 0,
+            "sachet_level": "NO ACTIVE ALERT",
+            "alerts": []
+        }
+
+    severity_scores = {
+        "EXTREME": 100,
+        "SEVERE": 85,
+        "MODERATE": 60,
+        "MINOR": 35,
+        "UNKNOWN": 0
+    }
+
+    urgency_scores = {
+        "IMMEDIATE": 100,
+        "EXPECTED": 70,
+        "FUTURE": 40,
+        "PAST": 0,
+        "UNKNOWN": 0
+    }
+
+    certainty_scores = {
+        "OBSERVED": 100,
+        "LIKELY": 80,
+        "POSSIBLE": 50,
+        "UNLIKELY": 20,
+        "UNKNOWN": 0
+    }
+
+    scored_alerts = []
+
+    highest_score = 0
+
+    for alert in active_alerts:
+
+        severity = (
+            alert.get(
+                "severity",
+                "UNKNOWN"
+            )
+            .strip()
+            .upper()
+        )
+
+        urgency = (
+            alert.get(
+                "urgency",
+                "UNKNOWN"
+            )
+            .strip()
+            .upper()
+        )
+
+        certainty = (
+            alert.get(
+                "certainty",
+                "UNKNOWN"
+            )
+            .strip()
+            .upper()
+        )
+
+        severity_score = severity_scores.get(
+            severity,
+            0
+        )
+
+        urgency_score = urgency_scores.get(
+            urgency,
+            0
+        )
+
+        certainty_score = certainty_scores.get(
+            certainty,
+            0
+        )
+
+        alert_score = (
+            severity_score * 0.50
+            +
+            urgency_score * 0.30
+            +
+            certainty_score * 0.20
+        )
+
+        alert_score = round(
+            max(
+                0,
+                min(
+                    100,
+                    alert_score
+                )
+            )
+        )
+
+        if alert_score >= 75:
+
+            alert_level = "CRITICAL"
+
+        elif alert_score >= 50:
+
+            alert_level = "HIGH"
+
+        elif alert_score >= 25:
+
+            alert_level = "MEDIUM"
+
+        else:
+
+            alert_level = "LOW"
+
+        scored_alert = {
+            **alert,
+            "severity_score":
+                severity_score,
+            "urgency_score":
+                urgency_score,
+            "certainty_score":
+                certainty_score,
+            "sachet_score":
+                alert_score,
+            "sachet_level":
+                alert_level
+        }
+
+        scored_alerts.append(
+            scored_alert
+        )
+
+        highest_score = max(
+            highest_score,
+            alert_score
+        )
+
+    if highest_score >= 75:
+
+        overall_level = "CRITICAL"
+
+    elif highest_score >= 50:
+
+        overall_level = "HIGH"
+
+    elif highest_score >= 25:
+
+        overall_level = "MEDIUM"
+
+    else:
+
+        overall_level = "LOW"
+
+    return {
+        "status": "success",
+        "district": district_name,
+        "alert_found": True,
+        "alert_count": len(
+            scored_alerts
+        ),
+        "sachet_score": highest_score,
+        "sachet_level": overall_level,
+        "score_explanation": (
+            "SACHET score combines "
+            "alert severity, urgency "
+            "and certainty."
+        ),
+        "alerts": scored_alerts
+    }
+def calculate_sachet_cap_score(cap_url):
+
+    cap_data = get_sachet_cap_alert(
+        cap_url
+    )
+
+    if cap_data.get("status") != "success":
+        return cap_data
+
+    severity_scores = {
+        "EXTREME": 100,
+        "SEVERE": 85,
+        "MODERATE": 60,
+        "MINOR": 35,
+        "UNKNOWN": 0
+    }
+
+    urgency_scores = {
+        "IMMEDIATE": 100,
+        "EXPECTED": 70,
+        "FUTURE": 40,
+        "PAST": 0,
+        "UNKNOWN": 0
+    }
+
+    certainty_scores = {
+        "OBSERVED": 100,
+        "LIKELY": 80,
+        "POSSIBLE": 50,
+        "UNLIKELY": 20,
+        "UNKNOWN": 0
+    }
+
+    severity = (
+        cap_data.get(
+            "severity",
+            "UNKNOWN"
+        )
+        .upper()
+    )
+
+    urgency = (
+        cap_data.get(
+            "urgency",
+            "UNKNOWN"
+        )
+        .upper()
+    )
+
+    certainty = (
+        cap_data.get(
+            "certainty",
+            "UNKNOWN"
+        )
+        .upper()
+    )
+
+    severity_score = severity_scores.get(
+        severity,
+        0
+    )
+
+    urgency_score = urgency_scores.get(
+        urgency,
+        0
+    )
+
+    certainty_score = certainty_scores.get(
+        certainty,
+        0
+    )
+
+    alert_score = (
+        severity_score * 0.50
+        +
+        urgency_score * 0.30
+        +
+        certainty_score * 0.20
+    )
+
+    alert_score = round(
+        max(
+            0,
+            min(
+                100,
+                alert_score
+            )
+        )
+    )
+
+    if alert_score >= 75:
+
+        alert_level = "CRITICAL"
+
+    elif alert_score >= 50:
+
+        alert_level = "HIGH"
+
+    elif alert_score >= 25:
+
+        alert_level = "MEDIUM"
+
+    else:
+
+        alert_level = "LOW"
+
+    return {
+        **cap_data,
+
+        "severity_score":
+            severity_score,
+
+        "urgency_score":
+            urgency_score,
+
+        "certainty_score":
+            certainty_score,
+
+        "sachet_score":
+            alert_score,
+
+        "sachet_level":
+            alert_level,
+
+        "score_explanation": (
+            "SACHET alert score combines "
+            "CAP severity, urgency and "
+            "certainty."
+        )
+    }
+@app.route("/api/pre-disaster/sachet/debug")
+def sachet_debug():
+
+    feed_url = (
+        "https://sachet.ndma.gov.in/"
+        "cap_public_website/rss/rss_india.xml"
+    )
+
+    try:
+
+        response = requests.get(
+            feed_url,
+            timeout=20
+        )
+
+        if response.status_code != 200:
+            return jsonify({
+                "status": "error",
+                "message": "Unable to access SACHET RSS feed",
+                "http_status": response.status_code
+            }), 500
+
+        root = ET.fromstring(
+            response.content
+        )
+
+        total_rss_alerts = 0
+        cap_links_found = 0
+        cap_success = 0
+        cap_failed = 0
+
+        title_matches = 0
+        headline_matches = 0
+        area_matches = 0
+        any_location_matches = 0
+
+        matching_alerts = []
+
+        sample_alerts = []
+
+        search_text = "coimbatore"
+
+        for item in root.findall(".//item"):
+
+            total_rss_alerts += 1
+
+            title_element = item.find("title")
+            link_element = item.find("link")
+
+            title = (
+                title_element.text.strip()
+                if title_element is not None
+                and title_element.text
+                else ""
+            )
+
+            link = (
+                link_element.text.strip()
+                if link_element is not None
+                and link_element.text
+                else ""
+            )
+
+            if not link:
+                continue
+
+            cap_links_found += 1
+
+            cap_result = get_sachet_cap_alert(
+                link
+            )
+
+            if cap_result.get("status") != "success":
+
+                cap_failed += 1
+
+                continue
+
+            cap_success += 1
+
+            headline = (
+                cap_result.get(
+                    "headline",
+                    ""
+                )
+            )
+
+            area = (
+                cap_result.get(
+                    "area",
+                    ""
+                )
+            )
+
+            title_lower = title.lower()
+            headline_lower = headline.lower()
+            area_lower = area.lower()
+
+            title_contains = (
+                search_text
+                in title_lower
+            )
+
+            headline_contains = (
+                search_text
+                in headline_lower
+            )
+
+            area_contains = (
+                search_text
+                in area_lower
+            )
+
+            any_location_contains = (
+                title_contains
+                or headline_contains
+                or area_contains
+            )
+
+            if title_contains:
+                title_matches += 1
+
+            if headline_contains:
+                headline_matches += 1
+
+            if area_contains:
+                area_matches += 1
+
+            if any_location_contains:
+                any_location_matches += 1
+
+                matching_alerts.append({
+                    "title": title,
+                    "headline": headline,
+                    "area": area,
+                    "event":
+                        cap_result.get(
+                            "event",
+                            ""
+                        ),
+                    "severity":
+                        cap_result.get(
+                            "severity",
+                            ""
+                        ),
+                    "urgency":
+                        cap_result.get(
+                            "urgency",
+                            ""
+                        ),
+                    "certainty":
+                        cap_result.get(
+                            "certainty",
+                            ""
+                        ),
+                    "link": link
+                })
+
+            if len(sample_alerts) < 10:
+
+                sample_alerts.append({
+                    "title": title,
+                    "headline": headline,
+                    "area": area,
+
+                    "title_contains_coimbatore":
+                        title_contains,
+
+                    "headline_contains_coimbatore":
+                        headline_contains,
+
+                    "area_contains_coimbatore":
+                        area_contains,
+
+                    "event":
+                        cap_result.get(
+                            "event",
+                            ""
+                        ),
+
+                    "severity":
+                        cap_result.get(
+                            "severity",
+                            ""
+                        ),
+
+                    "urgency":
+                        cap_result.get(
+                            "urgency",
+                            ""
+                        ),
+
+                    "certainty":
+                        cap_result.get(
+                            "certainty",
+                            ""
+                        ),
+
+                    "link": link
+                })
+
+        return jsonify({
+
+            "status": "success",
+
+            "search_location":
+                "COIMBATORE",
+
+            "feed_url":
+                feed_url,
+
+            "total_rss_alerts":
+                total_rss_alerts,
+
+            "cap_links_found":
+                cap_links_found,
+
+            "cap_success":
+                cap_success,
+
+            "cap_failed":
+                cap_failed,
+
+            "title_matches":
+                title_matches,
+
+            "headline_matches":
+                headline_matches,
+
+            "area_matches":
+                area_matches,
+
+            "any_location_matches":
+                any_location_matches,
+
+            "matching_alerts":
+                matching_alerts,
+
+            "sample_alerts":
+                sample_alerts
+        })
+
+    except ET.ParseError:
+
+        return jsonify({
+            "status": "error",
+            "message": "SACHET returned invalid XML"
+        }), 500
+
+    except Exception as e:
+
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+@app.route("/api/pre-disaster/sachet/active")
+def sachet_active():
+
+    district = request.args.get(
+        "district",
+        ""
+    ).strip()
+
+    if not district:
+
+        return jsonify({
+            "status": "error",
+            "message": "District is required"
+        }), 400
+
+    result = get_active_sachet_alerts(
+        district
+    )
+
+    if result.get("status") != "success":
+
+        return jsonify(result), 500
+
+    return jsonify(result)
+@app.route("/api/pre-disaster/sachet/score")
+def sachet_score_by_district():
+
+    district = request.args.get(
+        "district",
+        ""
+    ).strip()
+
+    if not district:
+
+        return jsonify({
+            "status": "error",
+            "message": "District is required"
+        }), 400
+
+    result = calculate_sachet_alert_score(
+        district
+    )
+
+    if result.get("status") != "success":
+
+        return jsonify(result), 500
+
+    return jsonify(result)
+@app.route("/api/pre-disaster/sachet/score")
+def sachet_score():
+
+    cap_url = request.args.get(
+        "url",
+        ""
+    ).strip()
+
+    if not cap_url:
+
+        return jsonify({
+            "status": "error",
+            "message": "CAP URL is required"
+        }), 400
+
+    result = calculate_sachet_alert_score(
+        cap_url
+    )
+
+    if result.get("status") != "success":
+
+        return jsonify(result), 500
+
+    return jsonify(result)
+@app.route("/api/pre-disaster/sachet")
+def sachet_alerts():
+
+    district = request.args.get(
+        "district",
+        ""
+    ).strip()
+
+    result = get_sachet_alerts(
+        district if district else None
+    )
+
+    if result.get("status") != "success":
+        return jsonify(result), 500
 
     return jsonify(result)
 @app.route("/api/pre-disaster/cwc/risk")
@@ -1196,62 +2685,47 @@ def generic_pre_disaster_risk():
         ""
     ).strip().upper()
 
-    # Check district
     if not district:
+
         return jsonify({
             "status": "error",
             "message": "District is required"
         }), 400
 
-    # Check supported district
     if district not in DISTRICT_COORDINATES:
+
         return jsonify({
             "status": "error",
             "message": "District is not supported",
-            "available_districts": sorted(
-                DISTRICT_COORDINATES.keys()
-            )
+            "available_districts":
+                sorted(
+                    DISTRICT_COORDINATES.keys()
+                )
         }), 400
 
-    # Get district coordinates
-    latitude, longitude = DISTRICT_COORDINATES[district]
+    # --------------------------------
+    # SACHET ONLY
+    # --------------------------------
 
-    # -------------------------
-    # IMD RISK
-    # -------------------------
-
-    imd_result = calculate_imd_district_score(
+    sachet_result = calculate_sachet_alert_score(
         district
     )
 
-    if imd_result.get("status") != "success":
-        return jsonify(imd_result), 500
+    if sachet_result.get("status") != "success":
 
-    # -------------------------
-    # CWC RISK
-    # -------------------------
-
-    cwc_result = calculate_cwc_historical_score(
-        latitude,
-        longitude
-    )
-
-    if cwc_result.get("status") != "success":
         return jsonify({
             "status": "error",
-            "message": "CWC data unavailable",
             "district": district,
-            "imd": imd_result
+            "message": (
+                "Unable to retrieve "
+                "SACHET alert information"
+            ),
+            "sachet": sachet_result
         }), 500
 
-    # -------------------------
-    # FINAL RISK
-    # -------------------------
-
-    final_result = calculate_final_pre_disaster_risk(
-        imd_result["imd_score"],
-        cwc_result["cwc_score"]
-    )
+    # --------------------------------
+    # FINAL RESPONSE
+    # --------------------------------
 
     return jsonify({
 
@@ -1259,23 +2733,55 @@ def generic_pre_disaster_risk():
 
         "district": district,
 
-        "location": {
-            "latitude": latitude,
-            "longitude": longitude
+        "source": "SACHET - NDMA",
+
+        "sachet": {
+
+            "alert_found":
+                sachet_result.get(
+                    "alert_found",
+                    False
+                ),
+
+            "alert_count":
+                sachet_result.get(
+                    "alert_count",
+                    0
+                ),
+
+            "sachet_score":
+                sachet_result.get(
+                    "sachet_score",
+                    0
+                ),
+
+            "sachet_level":
+                sachet_result.get(
+                    "sachet_level",
+                    "NO ACTIVE ALERT"
+                ),
+
+            "score_explanation":
+                sachet_result.get(
+                    "score_explanation",
+                    ""
+                ),
+
+            "alerts":
+                sachet_result.get(
+                    "alerts",
+                    []
+                )
         },
 
-        "imd": imd_result,
-
-        "cwc": cwc_result,
-
-        "final_score":
-            final_result["final_score"],
-
-        "risk_level":
-            final_result["risk_level"],
-
-        "explanation":
-            final_result["explanation"]
+        "explanation": (
+            "Pre-disaster alert assessment "
+            "is based on active SACHET "
+            "alerts from NDMA. The system "
+            "does not treat the absence of "
+            "a SACHET alert as proof that "
+            "no disaster will occur."
+        )
     })
 # =========================================================
 # IMD DISTRICT WARNING TEST

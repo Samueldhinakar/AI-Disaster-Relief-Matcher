@@ -78,12 +78,14 @@ function PreDisasterDashboard() {
       const data =
         await response.json();
 
-      if (!response.ok ||
-          data.status !== "success") {
+      if (
+        !response.ok ||
+        data.status !== "success"
+      ) {
 
         throw new Error(
           data.message ||
-          "Risk calculation failed."
+          "SACHET alert assessment failed."
         );
       }
 
@@ -103,6 +105,7 @@ function PreDisasterDashboard() {
     }
   };
 
+
   const getRiskClass = (level) => {
 
     if (level === "CRITICAL") {
@@ -120,6 +123,7 @@ function PreDisasterDashboard() {
     return "risk-low";
   };
 
+
   return (
 
     <section className="pre-disaster">
@@ -131,19 +135,20 @@ function PreDisasterDashboard() {
         <div>
 
           <p className="eyebrow">
-            AI PRE-DISASTER ANALYSIS
+            AI PRE-DISASTER PREPAREDNESS
           </p>
 
           <h2>
-            IMD + CWC Risk Assessment
+            SACHET Disaster Alert Assessment
           </h2>
 
           <p>
-            The AI-assisted engine analyzes
-            official weather warning information
-            and CWC historical water-level data
-            to calculate an explainable
-            preparedness risk score.
+            The AI-assisted preparedness engine
+            analyzes official SACHET alerts from
+            the National Disaster Management
+            Authority (NDMA) to identify active
+            disaster alerts for the selected
+            district.
           </p>
 
         </div>
@@ -156,7 +161,7 @@ function PreDisasterDashboard() {
       <div className="card">
 
         <h3>
-          Risk Assessment
+          Check District Alert
         </h3>
 
         <div className="form-grid">
@@ -186,8 +191,8 @@ function PreDisasterDashboard() {
             </select>
 
             <small>
-              IMD and CWC information will
-              be retrieved automatically.
+              Official SACHET alert information
+              will be retrieved automatically.
             </small>
 
           </label>
@@ -202,8 +207,8 @@ function PreDisasterDashboard() {
         >
 
           {loading
-            ? "Analyzing..."
-            : "🔍 Check Current Risk"}
+            ? "Checking SACHET..."
+            : "🔍 Check Current Alert"}
 
         </button>
 
@@ -232,291 +237,319 @@ function PreDisasterDashboard() {
 
         <div className="risk-result">
 
-
-          {/* OVERALL RISK */}
+          {/* STATUS CARD */}
 
           <div className="card">
 
             <p className="eyebrow">
-              AI RISK RESULT
+              SACHET ALERT RESULT
             </p>
 
             <h2>
               {result.district}
             </h2>
 
-            <div className="risk-score">
-
-              <strong>
-                {result.final_score}
-              </strong>
-
-              <span>
-                / 100
-              </span>
-
-            </div>
-
-            <h3
-              className={getRiskClass(
-                result.risk_level
-              )}
-            >
-              {result.risk_level}
-            </h3>
-
             <p>
-              Overall preparedness risk
-              calculated from IMD weather
-              warning information and CWC
-              historical water-level analysis.
+              Source:{" "}
+              <strong>
+                {result.source}
+              </strong>
             </p>
 
-          </div>
+
+            {result.sachet.alert_found ? (
+
+              <>
+
+                <div className="risk-score">
+
+                  <strong>
+                    {result.sachet.sachet_score}
+                  </strong>
+
+                  <span>
+                    / 100
+                  </span>
+
+                </div>
 
 
-          {/* IMD + CWC */}
+                <h3
+                  className={getRiskClass(
+                    result.sachet.sachet_level
+                  )}
+                >
+                  {result.sachet.sachet_level}
+                </h3>
 
-          <div className="two-col">
-
-
-            {/* IMD */}
-
-            <div className="card">
-
-              <h3>
-                🌦️ IMD Weather Analysis
-              </h3>
-
-              <p>
-                IMD Score:{" "}
-                <strong>
-                  {result.imd.imd_score}
-                </strong>
-                {" / 100"}
-              </p>
-
-              <p>
-                Risk Level:{" "}
-                <strong>
-                  {result.imd.imd_level}
-                </strong>
-              </p>
-
-              <p>
-                Warning Date:{" "}
-                <strong>
-                  {result.imd.date}
-                </strong>
-              </p>
-
-              <p>
-                Warning:
-              </p>
-
-              {result.imd.warnings &&
-                result.imd.warnings.length > 0 ? (
-
-                result.imd.warnings.map(
-                  (warning, index) => (
-
-                    <p key={index}>
-                      ⚠️ {warning}
-                    </p>
-
-                  )
-                )
-
-              ) : (
 
                 <p>
-                  No specific warning text
-                  available.
+                  Active SACHET alerts found:
+                  {" "}
+                  <strong>
+                    {result.sachet.alert_count}
+                  </strong>
                 </p>
 
+              </>
+
+            ) : (
+
+              <>
+
+                <div className="risk-score">
+
+                  <strong>
+                    0
+                  </strong>
+
+                  <span>
+                    / 100
+                  </span>
+
+                </div>
+
+
+                <h3 className="risk-low">
+                  NO ACTIVE ALERT
+                </h3>
+
+
+                <p>
+                  No active matching SACHET alert
+                  was found for this district.
+                </p>
+
+              </>
+
+            )}
+
+          </div>
+
+
+          {/* ACTIVE ALERT DETAILS */}
+
+          {result.sachet.alert_found &&
+            result.sachet.alerts &&
+            result.sachet.alerts.length > 0 && (
+
+            <>
+
+              {result.sachet.alerts.map(
+                (alert, index) => (
+
+                  <div
+                    className="card"
+                    key={
+                      alert.identifier ||
+                      index
+                    }
+                  >
+
+                    <p className="eyebrow">
+                      ACTIVE SACHET ALERT
+                    </p>
+
+                    <h3>
+                      🚨 {alert.event ||
+                        "Disaster Alert"}
+                    </h3>
+
+
+                    <p>
+                      <strong>
+                        Severity:
+                      </strong>{" "}
+                      {alert.severity ||
+                        "Not specified"}
+                    </p>
+
+
+                    <p>
+                      <strong>
+                        Urgency:
+                      </strong>{" "}
+                      {alert.urgency ||
+                        "Not specified"}
+                    </p>
+
+
+                    <p>
+                      <strong>
+                        Certainty:
+                      </strong>{" "}
+                      {alert.certainty ||
+                        "Not specified"}
+                    </p>
+
+
+                    {alert.headline && (
+
+                      <div>
+
+                        <p>
+                          <strong>
+                            Alert Details:
+                          </strong>
+                        </p>
+
+                        <p>
+                          {alert.headline}
+                        </p>
+
+                      </div>
+
+                    )}
+
+
+                    {alert.area && (
+
+                      <div>
+
+                        <p>
+                          <strong>
+                            Affected Area:
+                          </strong>
+                        </p>
+
+                        <p>
+                          {alert.area}
+                        </p>
+
+                      </div>
+
+                    )}
+
+
+                    {alert.effective && (
+
+                      <p>
+                        <strong>
+                          Effective:
+                        </strong>{" "}
+                        {alert.effective}
+                      </p>
+
+                    )}
+
+
+                    {alert.expires && (
+
+                      <p>
+                        <strong>
+                          Expires:
+                        </strong>{" "}
+                        {alert.expires}
+                      </p>
+
+                    )}
+
+
+                    {alert.instruction && (
+
+                      <div>
+
+                        <p>
+                          <strong>
+                            Official Instruction:
+                          </strong>
+                        </p>
+
+                        <p>
+                          {alert.instruction}
+                        </p>
+
+                      </div>
+
+                    )}
+
+
+                    {alert.sender && (
+
+                      <p>
+                        <strong>
+                          Alert Sender:
+                        </strong>{" "}
+                        {alert.sender}
+                      </p>
+
+                    )}
+
+                  </div>
+
+                )
               )}
 
-              <p>
-                IMD contributes{" "}
-                <strong>60%</strong>
-                {" "}of the final score.
-              </p>
+            </>
 
-            </div>
+          )}
 
 
-            {/* CWC */}
-
-            <div className="card">
-
-              <h3>
-                🌊 CWC Water-Level Analysis
-              </h3>
-
-              <p>
-                CWC Score:{" "}
-                <strong>
-                  {result.cwc.cwc_score}
-                </strong>
-                {" / 100"}
-              </p>
-
-              <p>
-                Risk Level:{" "}
-                <strong>
-                  {result.cwc.cwc_level}
-                </strong>
-              </p>
-
-              <p>
-                Station:{" "}
-                <strong>
-                  {result.cwc.station}
-                </strong>
-              </p>
-
-              <p>
-                River:{" "}
-                <strong>
-                  {result.cwc.river}
-                </strong>
-              </p>
-
-              <p>
-                Latest Water Level:{" "}
-                <strong>
-                  {result.cwc.latest_level}
-                </strong>
-              </p>
-
-              <p>
-                Latest Reading:{" "}
-                <strong>
-                  {result.cwc.latest_time}
-                </strong>
-              </p>
-
-              <p>
-                Historical Average:{" "}
-                <strong>
-                  {result.cwc.average_level}
-                </strong>
-              </p>
-
-              <p>
-                CWC contributes{" "}
-                <strong>40%</strong>
-                {" "}of the final score.
-              </p>
-
-            </div>
-
-          </div>
-
-
-          {/* SCORE BREAKDOWN */}
+          {/* SCORE EXPLANATION */}
 
           <div className="card">
 
             <h3>
-              📊 Risk Score Breakdown
+              📊 SACHET Alert Assessment
             </h3>
 
-            <p>
-              IMD Weather Score:
-              {" "}
-              <strong>
-                {result.imd.imd_score}
-              </strong>
-              {" "}× 60%
-            </p>
+            {result.sachet.alert_found ? (
 
-            <p>
-              CWC Water-Level Score:
-              {" "}
-              <strong>
-                {result.cwc.cwc_score}
-              </strong>
-              {" "}× 40%
-            </p>
+              <>
 
-            <p>
-              Final Risk Score:
-              {" "}
-              <strong>
-                {result.final_score}
-              </strong>
-              {" / 100"}
-            </p>
+                <p>
+                  SACHET Alert Score:
+                  {" "}
+                  <strong>
+                    {result.sachet.sachet_score}
+                  </strong>
+                  {" / 100"}
+                </p>
 
-            <p>
-              {result.explanation}
-            </p>
+                <p>
+                  Alert Level:
+                  {" "}
+                  <strong>
+                    {result.sachet.sachet_level}
+                  </strong>
+                </p>
 
-          </div>
+                <p>
+                  {result.sachet.score_explanation}
+                </p>
 
+                <p>
+                  The score is an internal,
+                  explainable alert-assessment
+                  score based on the severity,
+                  urgency and certainty values
+                  contained in the official SACHET
+                  alert.
+                </p>
 
-          {/* CWC INFORMATION */}
+              </>
 
-          <div className="card">
+            ) : (
 
-            <h3>
-              🌊 CWC Historical Information
-            </h3>
+              <>
 
-            <p>
-              The selected district is
-              associated with the nearest
-              available CWC monitoring station.
-            </p>
+                <p>
+                  No active SACHET alert is
+                  currently available for the
+                  selected district.
+                </p>
 
-            <p>
-              Monitoring Station:
-              {" "}
-              <strong>
-                {result.cwc.station}
-              </strong>
-            </p>
+                <p>
+                  Continue monitoring official
+                  disaster alerts because the
+                  absence of an active alert does
+                  not guarantee that a disaster
+                  will not occur.
+                </p>
 
-            <p>
-              Station District:
-              {" "}
-              <strong>
-                {result.cwc.district}
-              </strong>
-            </p>
+              </>
 
-            <p>
-              River:
-              {" "}
-              <strong>
-                {result.cwc.river}
-              </strong>
-            </p>
-
-            <p>
-              Historical Minimum:
-              {" "}
-              <strong>
-                {result.cwc.minimum_level}
-              </strong>
-            </p>
-
-            <p>
-              Historical 90th Percentile:
-              {" "}
-              <strong>
-                {result.cwc.percentile_90}
-              </strong>
-            </p>
-
-            <p>
-              Historical 95th Percentile:
-              {" "}
-              <strong>
-                {result.cwc.percentile_95}
-              </strong>
-            </p>
+            )}
 
           </div>
 
@@ -526,67 +559,31 @@ function PreDisasterDashboard() {
           <div className="card">
 
             <h3>
-              🛡️ Recommended Preparedness Action
+              🛡️ Preparedness Guidance
             </h3>
 
 
-            {result.risk_level ===
-              "CRITICAL" && (
+            {result.sachet.alert_found ? (
 
               <div>
 
                 <p>
-                  🚨 Risk level is CRITICAL.
+                  🚨 An active SACHET alert has
+                  been identified for{" "}
+                  <strong>
+                    {result.district}
+                  </strong>.
                 </p>
 
                 <p>
-                  Prepare essential resources
-                  immediately and review
-                  emergency response readiness.
+                  Take appropriate preparedness
+                  measures according to the
+                  official alert and instructions.
                 </p>
 
                 <p>
-                  • Keep food and drinking water
-                  ready.
-                </p>
-
-                <p>
-                  • Keep essential medicines
-                  available.
-                </p>
-
-                <p>
-                  • Prepare emergency shelter
-                  arrangements.
-                </p>
-
-                <p>
-                  • Closely monitor official
-                  emergency announcements.
-                </p>
-
-              </div>
-
-            )}
-
-
-            {result.risk_level ===
-              "HIGH" && (
-
-              <div>
-
-                <p>
-                  ⚠️ Risk level is HIGH.
-                </p>
-
-                <p>
-                  Increase preparedness and
-                  keep essential resources ready.
-                </p>
-
-                <p>
-                  • Store drinking water and
-                  essential food.
+                  • Keep essential food and
+                  drinking water ready.
                 </p>
 
                 <p>
@@ -595,61 +592,36 @@ function PreDisasterDashboard() {
                 </p>
 
                 <p>
-                  • Monitor official weather
-                  updates.
+                  • Keep important documents and
+                  emergency contacts accessible.
+                </p>
+
+                <p>
+                  • Follow instructions issued by
+                  the relevant authorities.
+                </p>
+
+                <p>
+                  • Continue monitoring official
+                  SACHET alerts.
                 </p>
 
               </div>
 
-            )}
-
-
-            {result.risk_level ===
-              "MEDIUM" && (
+            ) : (
 
               <div>
 
                 <p>
-                  🟡 Risk level is MEDIUM.
+                  🟢 No active SACHET alert was
+                  found for this district at the
+                  time of checking.
                 </p>
 
                 <p>
-                  Monitor official updates and
-                  prepare essential resources
-                  for possible escalation.
-                </p>
-
-                <p>
-                  • Keep basic food and water
-                  available.
-                </p>
-
-                <p>
-                  • Check emergency contacts.
-                </p>
-
-                <p>
-                  • Monitor IMD weather warnings.
-                </p>
-
-              </div>
-
-            )}
-
-
-            {result.risk_level ===
-              "LOW" && (
-
-              <div>
-
-                <p>
-                  🟢 Risk level is LOW.
-                </p>
-
-                <p>
-                  Continue monitoring official
-                  weather and water-level
-                  information.
+                  This does not mean that the
+                  district is guaranteed to be
+                  free from disaster risk.
                 </p>
 
                 <p>
@@ -658,13 +630,56 @@ function PreDisasterDashboard() {
                 </p>
 
                 <p>
-                  • Stay aware of official
-                  warnings.
+                  • Keep emergency contacts
+                  available.
+                </p>
+
+                <p>
+                  • Stay aware of official disaster
+                  announcements.
+                </p>
+
+                <p>
+                  • Check SACHET regularly for
+                  newly issued alerts.
                 </p>
 
               </div>
 
             )}
+
+          </div>
+
+
+          {/* OFFICIAL SOURCE */}
+
+          <div className="card">
+
+            <h3>
+              🏛️ Official Alert Source
+            </h3>
+
+            <p>
+              This assessment uses official
+              disaster alerts published through
+              SACHET by the National Disaster
+              Management Authority (NDMA).
+            </p>
+
+            <p>
+              The application retrieves the
+              alert information and converts
+              the alert's severity, urgency and
+              certainty into an explainable
+              internal preparedness score.
+            </p>
+
+            <p>
+              The score is a decision-support
+              indicator and is not an official
+              NDMA risk score or a probability
+              that a disaster will occur.
+            </p>
 
           </div>
 
@@ -682,12 +697,13 @@ function PreDisasterDashboard() {
         </strong>
 
         {" "}
-        This AI-assisted score is a
-        decision-support indicator based
-        on official IMD warning information
-        and CWC historical water-level data.
-        It does not guarantee that a disaster
-        will occur.
+        This AI-assisted preparedness
+        assessment is based on active
+        official SACHET alerts from NDMA.
+        The system does not predict the exact
+        occurrence of a disaster, and the
+        absence of an alert does not guarantee
+        that no disaster will occur.
 
       </div>
 
