@@ -3419,16 +3419,42 @@ def generic_pre_disaster_risk():
     )
 
     if sachet_result.get("status") != "success":
-
-        return jsonify({
-            "status": "error",
-            "district": district,
-            "message": (
-                "Unable to retrieve "
-                "SACHET alert information"
+       return jsonify({
+        "status": "success",
+        "district": district,
+        "source": "SACHET - NDMA",
+        "sachet": {
+            "alert_found": False,
+            "alert_count": 0,
+            "sachet_score": None,
+            "sachet_level": "DATA UNAVAILABLE",
+            "threat_level": "DATA UNAVAILABLE",
+            "public_alert": False,
+            "threat_reason": (
+                "The SACHET alert service is temporarily "
+                "unavailable, so the current disaster "
+                "alert status cannot be determined."
             ),
-            "sachet": sachet_result
-        }), 500
+            "preparedness_guidance": [
+                "Check the official SACHET/NDMA alerts.",
+                "Follow instructions from local authorities.",
+                "Keep your phone charged and emergency contacts ready.",
+                "Keep basic emergency supplies available."
+            ],
+            "score_explanation": (
+                "No SACHET score is calculated because "
+                "the official SACHET alert service could "
+                "not be reached."
+            ),
+            "alerts": []
+        },
+        "explanation": (
+            "The system could not reach the official "
+            "SACHET alert service at this time. "
+            "This does not mean that there is no disaster "
+            "risk. Please monitor official alerts."
+        )
+    }), 200
 
     # --------------------------------
     # FINAL RESPONSE
