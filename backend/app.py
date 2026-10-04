@@ -1048,12 +1048,45 @@ def get_sachet_alerts(district_name=None):
 
     try:
 
-        response = requests.get(
-            feed_url,
-            timeout=20
-        )
+        # -------------------------------------------------
+        # 1. Connect to SACHET RSS feed
+        # -------------------------------------------------
+
+        try:
+
+            response = requests.get(
+                feed_url,
+                timeout=(5, 15)
+            )
+
+        except requests.exceptions.Timeout:
+
+            return {
+                "status": "error",
+                "error_type": "timeout",
+                "message": (
+                    "SACHET server did not respond within "
+                    "the allowed time. Please try again later."
+                )
+            }
+
+        except requests.exceptions.ConnectionError:
+
+            return {
+                "status": "error",
+                "error_type": "connection",
+                "message": (
+                    "Unable to connect to the SACHET server. "
+                    "Please try again later."
+                )
+            }
+
+        # -------------------------------------------------
+        # 2. Check HTTP response
+        # -------------------------------------------------
 
         if response.status_code != 200:
+
             return {
                 "status": "error",
                 "message": (
@@ -1062,11 +1095,19 @@ def get_sachet_alerts(district_name=None):
                 "http_status": response.status_code
             }
 
+        # -------------------------------------------------
+        # 3. Parse RSS XML
+        # -------------------------------------------------
+
         root = ET.fromstring(
             response.content
         )
 
         alerts = []
+
+        # -------------------------------------------------
+        # 4. Prepare district filter
+        # -------------------------------------------------
 
         district_filter = None
 
@@ -1077,6 +1118,10 @@ def get_sachet_alerts(district_name=None):
                 .strip()
                 .lower()
             )
+
+        # -------------------------------------------------
+        # 5. Read RSS alerts
+        # -------------------------------------------------
 
         for item in root.findall(".//item"):
 
@@ -1105,8 +1150,11 @@ def get_sachet_alerts(district_name=None):
                 else ""
             )
 
-            # If no district was selected,
-            # return the RSS alerts normally.
+            # -------------------------------------------------
+            # 6. If no district is selected,
+            #    return RSS alerts normally
+            # -------------------------------------------------
+
             if not district_filter:
 
                 alerts.append({
@@ -1117,8 +1165,11 @@ def get_sachet_alerts(district_name=None):
 
                 continue
 
-            # A CAP link is required for
-            # accurate district matching.
+            # -------------------------------------------------
+            # 7. CAP link is required for accurate
+            #    geographic matching
+            # -------------------------------------------------
+
             if not link:
                 continue
 
@@ -1129,25 +1180,44 @@ def get_sachet_alerts(district_name=None):
             if cap_result.get("status") != "success":
                 continue
 
-            area = cap_result.get(
-                "area",
-                ""
+            # -------------------------------------------------
+            # 8. Get the official SACHET affected area
+            #
+            #    This comes from CAP <areaDesc>
+            # -------------------------------------------------
+
+            area = (
+                cap_result.get(
+                    "area",
+                    ""
+                )
+                .strip()
             )
 
-            headline = cap_result.get(
-                "headline",
-                ""
-            )
+            # -------------------------------------------------
+            # 9. Do NOT use headline or title for
+            #    district matching.
+            #
+            #    Only the official affected-area field
+            #    is used.
+            # -------------------------------------------------
 
-            # Search in multiple CAP fields.
-            searchable_text = (
-                area + " "
-                + headline + " "
-                + title
-            ).lower()
-
-            if district_filter not in searchable_text:
+            if not area:
                 continue
+
+            area_lower = area.lower()
+
+            # -------------------------------------------------
+            # 10. Check whether the selected district
+            #     is actually present in the affected area
+            # -------------------------------------------------
+
+            if district_filter not in area_lower:
+                continue
+
+            # -------------------------------------------------
+            # 11. Add the verified matching alert
+            # -------------------------------------------------
 
             alerts.append({
 
@@ -1157,96 +1227,87 @@ def get_sachet_alerts(district_name=None):
 
                 "link": link,
 
-                "identifier":
-                    cap_result.get(
-                        "identifier",
-                        ""
-                    ),
+                "identifier": cap_result.get(
+                    "identifier",
+                    ""
+                ),
 
-                "sender":
-                    cap_result.get(
-                        "sender",
-                        ""
-                    ),
+                "sender": cap_result.get(
+                    "sender",
+                    ""
+                ),
 
-                "sent":
-                    cap_result.get(
-                        "sent",
-                        ""
-                    ),
+                "sent": cap_result.get(
+                    "sent",
+                    ""
+                ),
 
-                "alert_status":
-                    cap_result.get(
-                        "alert_status",
-                        ""
-                    ),
+                "alert_status": cap_result.get(
+                    "alert_status",
+                    ""
+                ),
 
-                "message_type":
-                    cap_result.get(
-                        "message_type",
-                        ""
-                    ),
+                "message_type": cap_result.get(
+                    "message_type",
+                    ""
+                ),
 
-                "event":
-                    cap_result.get(
-                        "event",
-                        ""
-                    ),
+                "event": cap_result.get(
+                    "event",
+                    ""
+                ),
 
-                "urgency":
-                    cap_result.get(
-                        "urgency",
-                        ""
-                    ),
+                "urgency": cap_result.get(
+                    "urgency",
+                    ""
+                ),
 
-                "severity":
-                    cap_result.get(
-                        "severity",
-                        ""
-                    ),
+                "severity": cap_result.get(
+                    "severity",
+                    ""
+                ),
 
-                "certainty":
-                    cap_result.get(
-                        "certainty",
-                        ""
-                    ),
+                "certainty": cap_result.get(
+                    "certainty",
+                    ""
+                ),
 
-                "effective":
-                    cap_result.get(
-                        "effective",
-                        ""
-                    ),
+                "effective": cap_result.get(
+                    "effective",
+                    ""
+                ),
 
-                "onset":
-                    cap_result.get(
-                        "onset",
-                        ""
-                    ),
+                "onset": cap_result.get(
+                    "onset",
+                    ""
+                ),
 
-                "expires":
-                    cap_result.get(
-                        "expires",
-                        ""
-                    ),
+                "expires": cap_result.get(
+                    "expires",
+                    ""
+                ),
 
-                "headline":
-                    headline,
+                "headline": cap_result.get(
+                    "headline",
+                    ""
+                ),
 
-                "instruction":
-                    cap_result.get(
-                        "instruction",
-                        ""
-                    ),
+                "instruction": cap_result.get(
+                    "instruction",
+                    ""
+                ),
 
-                "area":
-                    area,
+                "area": area,
 
-                "source_url":
-                    cap_result.get(
-                        "source_url",
-                        link
-                    )
+                "source_url": cap_result.get(
+                    "source_url",
+                    link
+                )
             })
+
+        # -------------------------------------------------
+        # 12. Return results
+        # -------------------------------------------------
 
         return {
             "status": "success",
@@ -1262,15 +1323,16 @@ def get_sachet_alerts(district_name=None):
 
         return {
             "status": "error",
+            "error_type": "xml_parse",
             "message": (
                 "SACHET returned invalid XML"
             )
         }
 
     except Exception as e:
-
         return {
             "status": "error",
+            "error_type": "unknown",
             "message": str(e)
         }
 @app.route("/api/pre-disaster/sachet/alerts")
@@ -1668,20 +1730,11 @@ def get_sachet_cap_alert(cap_url):
         }
 def get_active_sachet_alerts(district_name):
 
-    district_filter = (
-        district_name
-        .strip()
-        .lower()
-    )
-
-    # Get SACHET alerts using the function
-    # we created in Step 1.
     result = get_sachet_alerts(
         district_name
     )
 
     if result.get("status") != "success":
-
         return result
 
     active_alerts = []
@@ -1695,20 +1748,9 @@ def get_active_sachet_alerts(district_name):
         []
     ):
 
-        expires_text = alert.get(
-            "expires",
-            ""
-        )
-
-        effective_text = alert.get(
-            "effective",
-            ""
-        )
-
-        onset_text = alert.get(
-            "onset",
-            ""
-        )
+        # -------------------------------------------------
+        # 1. Check alert status
+        # -------------------------------------------------
 
         alert_status = (
             alert.get(
@@ -1719,87 +1761,120 @@ def get_active_sachet_alerts(district_name):
             .lower()
         )
 
-        # Ignore alerts that are not Actual.
-        if (
-            alert_status
-            and alert_status != "actual"
-        ):
+        # Only Actual alerts are considered.
+        if alert_status != "actual":
             continue
 
-        # Convert SACHET timestamps.
+        # -------------------------------------------------
+        # 2. Read SACHET timestamps
+        # -------------------------------------------------
+
+        expires_text = (
+            alert.get(
+                "expires",
+                ""
+            )
+            .strip()
+        )
+
+        effective_text = (
+            alert.get(
+                "effective",
+                ""
+            )
+            .strip()
+        )
+
+        onset_text = (
+            alert.get(
+                "onset",
+                ""
+            )
+            .strip()
+        )
+
+        # -------------------------------------------------
+        # 3. Parse timestamps
+        # -------------------------------------------------
+
         expires_time = None
+        effective_time = None
+        onset_time = None
 
         if expires_text:
 
             try:
-
-                expires_time = (
-                    datetime.fromisoformat(
-                        expires_text
-                    )
+                expires_time = datetime.fromisoformat(
+                    expires_text
                 )
 
             except ValueError:
-
-                expires_time = None
-
-        effective_time = None
+                continue
 
         if effective_text:
 
             try:
-
-                effective_time = (
-                    datetime.fromisoformat(
-                        effective_text
-                    )
+                effective_time = datetime.fromisoformat(
+                    effective_text
                 )
 
             except ValueError:
-
-                effective_time = None
-
-        onset_time = None
+                continue
 
         if onset_text:
 
             try:
-
-                onset_time = (
-                    datetime.fromisoformat(
-                        onset_text
-                    )
+                onset_time = datetime.fromisoformat(
+                    onset_text
                 )
 
             except ValueError:
+                continue
 
-                onset_time = None
+        # -------------------------------------------------
+        # 4. Require an expiry time
+        # -------------------------------------------------
 
-        # If expiry time exists and has passed,
-        # ignore the alert.
-        if (
-            expires_time is not None
-            and expires_time < current_time
-        ):
+        # An alert without an expiry time cannot safely
+        # be treated as an active alert.
+        if expires_time is None:
             continue
 
-        # If effective time exists and the alert
-        # has not started yet, ignore it.
+        # -------------------------------------------------
+        # 5. Check expiry
+        # -------------------------------------------------
+
+        # Alert is inactive when expiry time has arrived.
+        if current_time >= expires_time:
+            continue
+
+        # -------------------------------------------------
+        # 6. Check effective time
+        # -------------------------------------------------
+
         if (
             effective_time is not None
-            and effective_time > current_time
+            and current_time < effective_time
         ):
             continue
 
-        # If onset exists and it is in the future,
-        # ignore it.
+        # -------------------------------------------------
+        # 7. Check onset time
+        # -------------------------------------------------
+
         if (
             onset_time is not None
-            and onset_time > current_time
+            and current_time < onset_time
         ):
             continue
 
-        active_alerts.append(alert)
+        # -------------------------------------------------
+        # 8. Alert is genuinely active
+        # -------------------------------------------------
+
+        active_alerts.append(
+            alert
+        )
 
     return {
         "status": "success",
@@ -1810,58 +1885,534 @@ def get_active_sachet_alerts(district_name):
         "alert_count": len(active_alerts),
         "alerts": active_alerts
     }
-def calculate_sachet_alert_score(
-    district_name
-):
+def classify_sachet_disaster_threat(alert):
+    """
+    Classifies an active SACHET alert for public display.
+
+    This is an application-level classification.
+    It is NOT an official NDMA/SACHET risk score.
+    """
+
+    event = (
+        alert.get("event", "")
+        .strip()
+        .lower()
+    )
+
+    headline = (
+        alert.get("headline", "")
+        .strip()
+        .lower()
+    )
+
+    severity = (
+        alert.get("severity", "")
+        .strip()
+        .upper()
+    )
+
+    urgency = (
+        alert.get("urgency", "")
+        .strip()
+        .upper()
+    )
+
+    certainty = (
+        alert.get("certainty", "")
+        .strip()
+        .upper()
+    )
+
+    # Combine official event information
+    # for classification.
+    hazard_text = (
+        event + " " + headline
+    )
+
+    # -------------------------------------------------
+    # 1. HIGH-CONCERN DISASTER HAZARDS
+    # -------------------------------------------------
+
+    critical_hazards = [
+        "tsunami",
+        "storm surge",
+        "landslide",
+        "flash flood",
+        "flood",
+        "cyclone",
+        "tropical cyclone",
+        "severe cyclonic storm",
+        "very severe cyclonic storm",
+        "extremely severe cyclonic storm"
+    ]
+
+    for hazard in critical_hazards:
+
+        if hazard in hazard_text:
+
+            if (
+                severity in [
+                    "EXTREME",
+                    "SEVERE"
+                ]
+                or urgency == "IMMEDIATE"
+            ):
+
+                return {
+                    "threat_level": "CRITICAL",
+                    "public_alert": True,
+                    "reason": (
+                        "SACHET reports a potentially "
+                        "dangerous disaster-related hazard."
+                    )
+                }
+
+            return {
+                "threat_level": "WARNING",
+                "public_alert": True,
+                "reason": (
+                    "SACHET reports a disaster-related "
+                    "hazard that requires preparedness."
+                )
+            }
+
+    # -------------------------------------------------
+    # 2. SEVERE WEATHER
+    # -------------------------------------------------
+
+    severe_weather = [
+        "very heavy rain",
+        "extremely heavy rain",
+        "heavy rainfall",
+        "heavy rain",
+        "thunderstorm",
+        "lightning",
+        "strong wind",
+        "gale",
+        "heat wave",
+        "cold wave"
+    ]
+
+    for hazard in severe_weather:
+
+        if hazard in hazard_text:
+
+            if severity == "EXTREME":
+
+                return {
+                    "threat_level": "CRITICAL",
+                    "public_alert": True,
+                    "reason": (
+                        "SACHET reports an extreme "
+                        "weather hazard."
+                    )
+                }
+
+            if (
+                severity == "SEVERE"
+                and certainty in [
+                    "OBSERVED",
+                    "LIKELY"
+                ]
+            ):
+
+                return {
+                    "threat_level": "WARNING",
+                    "public_alert": True,
+                    "reason": (
+                        "SACHET reports severe weather "
+                        "that may require preparedness."
+                    )
+                }
+
+            if (
+                urgency == "IMMEDIATE"
+                and certainty in [
+                    "OBSERVED",
+                    "LIKELY"
+                ]
+            ):
+
+                return {
+                    "threat_level": "PREPARE",
+                    "public_alert": True,
+                    "reason": (
+                        "SACHET reports an immediate "
+                        "weather-related concern."
+                    )
+                }
+
+            # Ordinary/moderate weather should NOT
+            # create a public disaster warning.
+            return {
+                "threat_level": "NORMAL",
+                "public_alert": False,
+                "reason": (
+                    "The current SACHET weather alert "
+                    "does not meet the application's "
+                    "disaster-warning threshold."
+                )
+            }
+
+    # -------------------------------------------------
+    # 3. OTHER SERIOUS HAZARDS
+    # -------------------------------------------------
+
+    other_hazards = [
+        "earthquake",
+        "avalanche",
+        "forest fire",
+        "wildfire",
+        "dam break",
+        "dam failure",
+        "chemical",
+        "industrial accident",
+        "nuclear",
+        "radiological"
+    ]
+
+    for hazard in other_hazards:
+
+        if hazard in hazard_text:
+
+            if severity == "EXTREME":
+
+                return {
+                    "threat_level": "CRITICAL",
+                    "public_alert": True,
+                    "reason": (
+                        "SACHET reports an extreme "
+                        "hazard condition."
+                    )
+                }
+
+            if severity == "SEVERE":
+
+                return {
+                    "threat_level": "WARNING",
+                    "public_alert": True,
+                    "reason": (
+                        "SACHET reports a severe "
+                        "hazard condition."
+                    )
+                }
+
+            return {
+                "threat_level": "PREPARE",
+                "public_alert": True,
+                "reason": (
+                    "SACHET reports a potentially "
+                    "hazardous event."
+                )
+            }
+
+    # -------------------------------------------------
+    # 4. DEFAULT
+    # -------------------------------------------------
+
+    return {
+        "threat_level": "NORMAL",
+        "public_alert": False,
+        "reason": (
+            "No disaster-level condition was "
+            "identified from the active SACHET alert."
+        )
+    }
+def get_sachet_preparedness_guidance(alert):
+    """
+    Generates application-level preparedness guidance
+    based on the hazard described in an active SACHET alert.
+
+    This guidance is informational and does not replace
+    official instructions from authorities.
+    """
+
+    event = (
+        alert.get("event", "")
+        .strip()
+        .lower()
+    )
+
+    headline = (
+        alert.get("headline", "")
+        .strip()
+        .lower()
+    )
+
+    hazard_text = event + " " + headline
+
+    guidance = []
+
+    # -------------------------------------------------
+    # FLOOD / HEAVY RAIN
+    # -------------------------------------------------
+    if (
+        "flood" in hazard_text
+        or "flash flood" in hazard_text
+        or "heavy rain" in hazard_text
+        or "heavy rainfall" in hazard_text
+        or "very heavy rain" in hazard_text
+        or "extremely heavy rain" in hazard_text
+        or "moderate rain" in hazard_text
+    ):
+        guidance.extend([
+            "Avoid unnecessary travel during heavy rainfall.",
+            "Stay away from flooded and waterlogged roads.",
+            "Keep essential items and important documents in a safe, elevated place.",
+            "Keep your phone, power bank and emergency contacts ready."
+        ])
+
+    # -------------------------------------------------
+    # LIGHTNING / THUNDERSTORM
+    # -------------------------------------------------
+    if (
+        "lightning" in hazard_text
+        or "thunderstorm" in hazard_text
+        or "thundershower" in hazard_text
+    ):
+        guidance.extend([
+            "During lightning, stay indoors and avoid open areas.",
+            "Avoid standing under isolated trees or near exposed electrical equipment.",
+            "If outdoors, move to a safe enclosed building as soon as possible."
+        ])
+
+    # -------------------------------------------------
+    # CYCLONE / STRONG WIND
+    # -------------------------------------------------
+    if (
+        "cyclone" in hazard_text
+        or "strong wind" in hazard_text
+        or "gale" in hazard_text
+        or "storm surge" in hazard_text
+    ):
+        guidance.extend([
+            "Stay indoors and follow official cyclone instructions.",
+            "Secure loose objects around your home or building.",
+            "Keep essential supplies, a charged phone and a power bank ready.",
+            "Avoid coastal and other areas specifically identified by authorities as unsafe."
+        ])
+
+    # -------------------------------------------------
+    # HEAT WAVE
+    # -------------------------------------------------
+    if (
+        "heat wave" in hazard_text
+        or "heatwave" in hazard_text
+    ):
+        guidance.extend([
+            "Avoid unnecessary outdoor activity during the hottest part of the day.",
+            "Drink sufficient water and stay hydrated.",
+            "Stay in a cool or well-ventilated place whenever possible.",
+            "Check on elderly people, children and others who may be vulnerable to heat."
+        ])
+
+    # -------------------------------------------------
+    # COLD WAVE
+    # -------------------------------------------------
+    if "cold wave" in hazard_text:
+        guidance.extend([
+            "Stay warm and avoid prolonged exposure to cold conditions.",
+            "Keep adequate warm clothing and essential supplies ready.",
+            "Check on elderly people, children and vulnerable persons."
+        ])
+
+    # -------------------------------------------------
+    # LANDSLIDE
+    # -------------------------------------------------
+    if "landslide" in hazard_text:
+        guidance.extend([
+            "Avoid unstable slopes and areas identified as landslide-prone.",
+            "Follow evacuation instructions issued by local authorities.",
+            "Do not enter areas affected by landslides or falling debris.",
+            "Keep emergency contacts and essential supplies ready."
+        ])
+
+    # -------------------------------------------------
+    # EARTHQUAKE
+    # -------------------------------------------------
+    if "earthquake" in hazard_text:
+        guidance.extend([
+            "Stay calm and follow official emergency instructions.",
+            "Move away from damaged buildings and structures.",
+            "Keep emergency supplies and communication devices ready.",
+            "Avoid entering damaged buildings until authorities declare them safe."
+        ])
+
+    # -------------------------------------------------
+    # WILDFIRE / FOREST FIRE
+    # -------------------------------------------------
+    if (
+        "wildfire" in hazard_text
+        or "forest fire" in hazard_text
+        or "forestfire" in hazard_text
+    ):
+        guidance.extend([
+            "Stay away from the affected fire area.",
+            "Follow evacuation instructions from local authorities.",
+            "Avoid travelling toward areas affected by smoke or fire.",
+            "Keep emergency contacts and essential supplies ready."
+        ])
+
+    # -------------------------------------------------
+    # AVALANCHE
+    # -------------------------------------------------
+    if "avalanche" in hazard_text:
+        guidance.extend([
+            "Avoid avalanche-prone areas.",
+            "Follow evacuation and travel instructions issued by authorities.",
+            "Do not enter restricted or unsafe areas."
+        ])
+
+    # -------------------------------------------------
+    # GENERIC FALLBACK
+    # -------------------------------------------------
+    if not guidance:
+        guidance = [
+            "Follow the official instructions issued by the relevant authorities.",
+            "Keep basic emergency supplies ready.",
+            "Keep your phone, power bank and emergency contacts available.",
+            "Continue monitoring official SACHET alerts for updates."
+        ]
+
+    # Remove duplicate guidance while preserving order.
+    unique_guidance = list(dict.fromkeys(guidance))
+
+    return unique_guidance
+def calculate_sachet_alert_score(district_name):
 
     result = get_active_sachet_alerts(
         district_name
     )
 
+    # -------------------------------------------------
+    # 1. SACHET SERVER / CONNECTION ERROR
+    # -------------------------------------------------
+
     if result.get("status") != "success":
-        return result
+
+        return {
+            "status": "error",
+            "district": district_name,
+
+            "alert_found": False,
+            "alert_count": 0,
+
+            "sachet_score": None,
+            "sachet_level": "DATA UNAVAILABLE",
+
+            "threat_level": "DATA UNAVAILABLE",
+            "public_alert": False,
+
+            "threat_reason": (
+                "The SACHET alert service could not "
+                "be reached, so a public disaster "
+                "assessment cannot be made."
+            ),
+
+            "message": result.get(
+                "message",
+                "Unable to retrieve SACHET alerts"
+            ),
+
+            "alerts": []
+        }
+
+    # -------------------------------------------------
+    # 2. GET ONLY ACTIVE ALERTS
+    # -------------------------------------------------
 
     active_alerts = result.get(
         "alerts",
         []
     )
 
-    # No active alert
+    # -------------------------------------------------
+    # 3. NO ACTIVE ALERT
+    # -------------------------------------------------
+
     if not active_alerts:
 
         return {
             "status": "success",
             "district": district_name,
+
             "alert_found": False,
             "alert_count": 0,
+
+            # Internal score
             "sachet_score": 0,
             "sachet_level": "NO ACTIVE ALERT",
+
+            # Public assessment
+            "threat_level": "NORMAL",
+            "public_alert": False,
+
+            "threat_reason": (
+                "No active matching SACHET alert "
+                "was found for this district."
+            ),
+
+            "score_explanation": (
+                "No active matching SACHET alert "
+                "was found for this district."
+            ),
+
+            "preparedness_guidance": [
+                "Keep basic emergency supplies ready.",
+                "Keep emergency contacts available.",
+                "Follow instructions issued by the relevant authorities.",
+                "Continue monitoring official SACHET alerts."
+            ],
+
             "alerts": []
         }
 
+    # -------------------------------------------------
+    # 4. SCORE VALUES
+    # -------------------------------------------------
+
     severity_scores = {
+
         "EXTREME": 100,
+
         "SEVERE": 85,
+
         "MODERATE": 60,
+
         "MINOR": 35,
+
         "UNKNOWN": 0
     }
 
     urgency_scores = {
+
         "IMMEDIATE": 100,
+
         "EXPECTED": 70,
+
         "FUTURE": 40,
+
         "PAST": 0,
+
         "UNKNOWN": 0
     }
 
     certainty_scores = {
+
         "OBSERVED": 100,
+
         "LIKELY": 80,
+
         "POSSIBLE": 50,
+
         "UNLIKELY": 20,
+
         "UNKNOWN": 0
     }
+
+    # -------------------------------------------------
+    # 5. CALCULATE SCORE FOR EACH ACTIVE ALERT
+    # -------------------------------------------------
 
     scored_alerts = []
 
@@ -1896,6 +2447,10 @@ def calculate_sachet_alert_score(
             .upper()
         )
 
+        # -------------------------------------------------
+        # Get individual scores
+        # -------------------------------------------------
+
         severity_score = severity_scores.get(
             severity,
             0
@@ -1911,13 +2466,20 @@ def calculate_sachet_alert_score(
             0
         )
 
+        # -------------------------------------------------
+        # Calculate internal alert score
+        # -------------------------------------------------
+
         alert_score = (
+
             severity_score * 0.50
-            +
-            urgency_score * 0.30
-            +
-            certainty_score * 0.20
+
+            + urgency_score * 0.30
+
+            + certainty_score * 0.20
         )
+
+        # Keep score between 0 and 100
 
         alert_score = round(
             max(
@@ -1928,6 +2490,10 @@ def calculate_sachet_alert_score(
                 )
             )
         )
+
+        # -------------------------------------------------
+        # Convert score into internal level
+        # -------------------------------------------------
 
         if alert_score >= 75:
 
@@ -1945,28 +2511,83 @@ def calculate_sachet_alert_score(
 
             alert_level = "LOW"
 
+        # -------------------------------------------------
+        # DISASTER THREAT CLASSIFICATION
+        # -------------------------------------------------
+
+        threat = classify_sachet_disaster_threat(
+            alert
+        )
+
+        # -------------------------------------------------
+        # HAZARD-SPECIFIC PREPAREDNESS GUIDANCE
+        # -------------------------------------------------
+
+        preparedness_guidance = (
+            get_sachet_preparedness_guidance(
+                alert
+            )
+        )
+
+        # -------------------------------------------------
+        # Add score + threat + guidance information
+        # -------------------------------------------------
+
         scored_alert = {
+
             **alert,
+
             "severity_score":
                 severity_score,
+
             "urgency_score":
                 urgency_score,
+
             "certainty_score":
                 certainty_score,
+
             "sachet_score":
                 alert_score,
+
             "sachet_level":
-                alert_level
+                alert_level,
+
+            "threat_level":
+                threat.get(
+                    "threat_level",
+                    "NORMAL"
+                ),
+
+            "public_alert":
+                threat.get(
+                    "public_alert",
+                    False
+                ),
+
+            "threat_reason":
+                threat.get(
+                    "reason",
+                    ""
+                ),
+
+            "preparedness_guidance":
+                preparedness_guidance
         }
 
         scored_alerts.append(
             scored_alert
         )
 
+        # Keep highest active alert score
+
         highest_score = max(
             highest_score,
             alert_score
         )
+
+    # -------------------------------------------------
+    # 6. DETERMINE OVERALL INTERNAL LEVEL
+    # -------------------------------------------------
 
     if highest_score >= 75:
 
@@ -1984,21 +2605,95 @@ def calculate_sachet_alert_score(
 
         overall_level = "LOW"
 
+    # -------------------------------------------------
+    # 7. DETERMINE OVERALL PUBLIC THREAT
+    # -------------------------------------------------
+
+    public_alerts = [
+
+        alert
+        for alert in scored_alerts
+        if alert.get(
+            "public_alert",
+            False
+        )
+    ]
+
+    if public_alerts:
+
+        threat_priority = {
+            "CRITICAL": 4,
+            "WARNING": 3,
+            "PREPARE": 2,
+            "NORMAL": 1
+        }
+
+        overall_threat = max(
+            public_alerts,
+            key=lambda alert:
+                threat_priority.get(
+                    alert.get(
+                        "threat_level",
+                        "NORMAL"
+                    ),
+                    1
+                )
+        )
+
+        overall_threat_level = (
+            overall_threat.get(
+                "threat_level",
+                "NORMAL"
+            )
+        )
+
+        overall_public_alert = True
+
+    else:
+
+        overall_threat_level = "NORMAL"
+
+        overall_public_alert = False
+
+    # -------------------------------------------------
+    # 8. FINAL RESULT
+    # -------------------------------------------------
+
     return {
+
         "status": "success",
+
         "district": district_name,
+
         "alert_found": True,
+
         "alert_count": len(
             scored_alerts
         ),
-        "sachet_score": highest_score,
-        "sachet_level": overall_level,
+
+        # Internal score
+        "sachet_score":
+            highest_score,
+
+        "sachet_level":
+            overall_level,
+
+        # Public-facing disaster classification
+        "threat_level":
+            overall_threat_level,
+
+        "public_alert":
+            overall_public_alert,
+
         "score_explanation": (
-            "SACHET score combines "
-            "alert severity, urgency "
-            "and certainty."
+            "This internal SACHET alert score "
+            "combines official alert severity, "
+            "urgency and certainty. It is not "
+            "an official NDMA/SACHET risk score."
         ),
-        "alerts": scored_alerts
+
+        "alerts":
+            scored_alerts
     }
 def calculate_sachet_cap_score(cap_url):
 
@@ -2737,42 +3432,81 @@ def generic_pre_disaster_risk():
 
         "sachet": {
 
-            "alert_found":
-                sachet_result.get(
-                    "alert_found",
-                    False
-                ),
+    "alert_found":
+        sachet_result.get(
+            "alert_found",
+            False
+        ),
 
-            "alert_count":
-                sachet_result.get(
-                    "alert_count",
-                    0
-                ),
+    "alert_count":
+        sachet_result.get(
+            "alert_count",
+            0
+        ),
 
-            "sachet_score":
-                sachet_result.get(
-                    "sachet_score",
-                    0
-                ),
+    # Internal explainable score
+    "sachet_score":
+        sachet_result.get(
+            "sachet_score",
+            0
+        ),
 
-            "sachet_level":
-                sachet_result.get(
-                    "sachet_level",
-                    "NO ACTIVE ALERT"
-                ),
+    # Internal score level
+    "sachet_level":
+        sachet_result.get(
+            "sachet_level",
+            "NO ACTIVE ALERT"
+        ),
 
-            "score_explanation":
-                sachet_result.get(
-                    "score_explanation",
-                    ""
-                ),
+    # Public-facing disaster assessment
+    "threat_level":
+        sachet_result.get(
+            "threat_level",
+            "NORMAL"
+        ),
 
-            "alerts":
-                sachet_result.get(
-                    "alerts",
-                    []
-                )
-        },
+    "public_alert":
+        sachet_result.get(
+            "public_alert",
+            False
+        ),
+
+    "threat_reason":
+        (
+            sachet_result.get(
+                "alerts",
+                [{}]
+            )[0].get(
+                "threat_reason",
+                ""
+            )
+            if sachet_result.get(
+                "alerts",
+                []
+            )
+            else ""
+        ),
+    
+    "preparedness_guidance": (
+    sachet_result.get("alerts", [{}])[0].get(
+        "preparedness_guidance",
+        []
+    )
+    if sachet_result.get("alerts", [])
+    else []
+),
+    "score_explanation":
+        sachet_result.get(
+            "score_explanation",
+            ""
+        ),
+
+    "alerts":
+        sachet_result.get(
+            "alerts",
+            []
+        )
+},
 
         "explanation": (
             "Pre-disaster alert assessment "

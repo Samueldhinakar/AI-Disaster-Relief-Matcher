@@ -58,6 +58,7 @@ function PreDisasterDashboard() {
     "Virudhunagar"
   ];
 
+
   const calculateRisk = async () => {
 
     setLoading(true);
@@ -261,39 +262,101 @@ function PreDisasterDashboard() {
 
               <>
 
-                <div className="risk-score">
+                {/* PUBLIC DISASTER WARNING */}
 
-                  <strong>
-                    {result.sachet.sachet_score}
-                  </strong>
+                {result.sachet.public_alert ? (
 
-                  <span>
-                    / 100
-                  </span>
+                  <>
 
-                </div>
+                    <div className="risk-score">
 
+                      <strong>
+                        {result.sachet.sachet_score}
+                      </strong>
 
-                <h3
-                  className={getRiskClass(
-                    result.sachet.sachet_level
-                  )}
-                >
-                  {result.sachet.sachet_level}
-                </h3>
+                      <span>
+                        / 100
+                      </span>
 
+                    </div>
 
-                <p>
-                  Active SACHET alerts found:
-                  {" "}
-                  <strong>
-                    {result.sachet.alert_count}
-                  </strong>
-                </p>
+                    <h3
+                      className={getRiskClass(
+                        result.sachet.threat_level
+                      )}
+                    >
+                      {result.sachet.threat_level}
+                    </h3>
+
+                    <p>
+                      ⚠️ <strong>
+                        A disaster-related public warning
+                        has been identified from the active
+                        SACHET alert.
+                      </strong>
+                    </p>
+
+                    <p>
+                      Active SACHET alerts found:{" "}
+                      <strong>
+                        {result.sachet.alert_count}
+                      </strong>
+                    </p>
+
+                  </>
+
+                ) : (
+
+                  /* ACTIVE BUT NON-DISASTER ALERT */
+
+                  <>
+
+                    <div className="risk-score">
+
+                      <strong>
+                        {result.sachet.sachet_score}
+                      </strong>
+
+                      <span>
+                        / 100
+                      </span>
+
+                    </div>
+
+                    <h3 className="risk-low">
+                      NORMAL
+                    </h3>
+
+                    <p>
+                      🟢 <strong>
+                        No disaster-level public warning
+                        is currently identified.
+                      </strong>
+                    </p>
+
+                    <p>
+                      An active SACHET alert is available
+                      for this district, but it does not
+                      meet the application's
+                      disaster-warning threshold.
+                    </p>
+
+                    <p>
+                      Active SACHET alerts found:{" "}
+                      <strong>
+                        {result.sachet.alert_count}
+                      </strong>
+                    </p>
+
+                  </>
+
+                )}
 
               </>
 
             ) : (
+
+              /* NO ACTIVE ALERT */
 
               <>
 
@@ -309,15 +372,19 @@ function PreDisasterDashboard() {
 
                 </div>
 
-
                 <h3 className="risk-low">
                   NO ACTIVE ALERT
                 </h3>
 
-
                 <p>
                   No active matching SACHET alert
                   was found for this district.
+                </p>
+
+                <p>
+                  Continue monitoring SACHET because
+                  alerts can be issued or updated
+                  as conditions change.
                 </p>
 
               </>
@@ -351,7 +418,8 @@ function PreDisasterDashboard() {
                     </p>
 
                     <h3>
-                      🚨 {alert.event ||
+                      🚨{" "}
+                      {alert.event ||
                         "Disaster Alert"}
                     </h3>
 
@@ -498,8 +566,7 @@ function PreDisasterDashboard() {
               <>
 
                 <p>
-                  SACHET Alert Score:
-                  {" "}
+                  Internal Alert Assessment Score:{" "}
                   <strong>
                     {result.sachet.sachet_score}
                   </strong>
@@ -507,11 +574,17 @@ function PreDisasterDashboard() {
                 </p>
 
                 <p>
-                  Alert Level:
-                  {" "}
+                  Public Threat Assessment:{" "}
                   <strong>
-                    {result.sachet.sachet_level}
+                    {result.sachet.threat_level}
                   </strong>
+                </p>
+
+                <p>
+                  <strong>
+                    Assessment Reason:
+                  </strong>{" "}
+                  {result.sachet.threat_reason}
                 </p>
 
                 <p>
@@ -519,12 +592,13 @@ function PreDisasterDashboard() {
                 </p>
 
                 <p>
-                  The score is an internal,
-                  explainable alert-assessment
-                  score based on the severity,
-                  urgency and certainty values
-                  contained in the official SACHET
-                  alert.
+                  This score is an internal,
+                  explainable assessment based on
+                  the severity, urgency and certainty
+                  values contained in the official
+                  SACHET alert. It is not a disaster
+                  probability or an official NDMA
+                  risk score.
                 </p>
 
               </>
@@ -563,7 +637,9 @@ function PreDisasterDashboard() {
             </h3>
 
 
-            {result.sachet.alert_found ? (
+            {/* ACTIVE PUBLIC WARNING */}
+
+            {result.sachet.public_alert ? (
 
               <div>
 
@@ -581,68 +657,193 @@ function PreDisasterDashboard() {
                   official alert and instructions.
                 </p>
 
+
+                {/* HAZARD-SPECIFIC GUIDANCE */}
+
+                {result.sachet.preparedness_guidance &&
+                 result.sachet.preparedness_guidance.length > 0 ? (
+
+                  result.sachet.preparedness_guidance.map(
+                    (guidance, index) => (
+
+                      <p key={index}>
+                        • {guidance}
+                      </p>
+
+                    )
+                  )
+
+                ) : (
+
+                  <>
+
+                    <p>
+                      • Keep essential food and
+                      drinking water ready.
+                    </p>
+
+                    <p>
+                      • Keep medicines and first-aid
+                      supplies available.
+                    </p>
+
+                    <p>
+                      • Keep important documents and
+                      emergency contacts accessible.
+                    </p>
+
+                    <p>
+                      • Follow instructions issued by
+                      the relevant authorities.
+                    </p>
+
+                    <p>
+                      • Continue monitoring official
+                      SACHET alerts.
+                    </p>
+
+                  </>
+
+                )}
+
+              </div>
+
+            ) : result.sachet.alert_found ? (
+
+              /* ACTIVE NON-DISASTER ALERT */
+
+              <div>
+
                 <p>
-                  • Keep essential food and
-                  drinking water ready.
+                  🟢 <strong>
+                    No disaster-level public warning
+                    is currently identified.
+                  </strong>
                 </p>
 
                 <p>
-                  • Keep medicines and first-aid
-                  supplies available.
+                  An active SACHET alert is currently
+                  available for this district, but it
+                  does not meet the application's
+                  disaster-warning threshold.
                 </p>
 
                 <p>
-                  • Keep important documents and
-                  emergency contacts accessible.
+                  Follow the official instructions
+                  and continue monitoring SACHET
+                  for updates.
                 </p>
 
-                <p>
-                  • Follow instructions issued by
-                  the relevant authorities.
-                </p>
 
-                <p>
-                  • Continue monitoring official
-                  SACHET alerts.
-                </p>
+                {/* HAZARD-SPECIFIC GUIDANCE */}
+
+                {result.sachet.preparedness_guidance &&
+                 result.sachet.preparedness_guidance.length > 0 ? (
+
+                  result.sachet.preparedness_guidance.map(
+                    (guidance, index) => (
+
+                      <p key={index}>
+                        • {guidance}
+                      </p>
+
+                    )
+                  )
+
+                ) : (
+
+                  <>
+
+                    <p>
+                      • Keep basic emergency
+                      supplies ready.
+                    </p>
+
+                    <p>
+                      • Keep emergency contacts
+                      available.
+                    </p>
+
+                    <p>
+                      • Follow instructions issued
+                      by the relevant authorities.
+                    </p>
+
+                    <p>
+                      • Continue monitoring official
+                      SACHET alerts.
+                    </p>
+
+                  </>
+
+                )}
 
               </div>
 
             ) : (
 
+              /* NO ACTIVE ALERT */
+
               <div>
 
                 <p>
-                  🟢 No active SACHET alert was
-                  found for this district at the
-                  time of checking.
+                  🟢 <strong>
+                    No disaster-level public warning
+                    is currently identified.
+                  </strong>
                 </p>
 
                 <p>
-                  This does not mean that the
-                  district is guaranteed to be
-                  free from disaster risk.
+                  No active matching SACHET alert
+                  was found for this district.
+                  Continue monitoring SACHET because
+                  alerts can be issued or updated
+                  as conditions change.
                 </p>
 
-                <p>
-                  • Keep basic emergency supplies
-                  ready.
-                </p>
 
-                <p>
-                  • Keep emergency contacts
-                  available.
-                </p>
+                {/* GENERAL PREPAREDNESS GUIDANCE */}
 
-                <p>
-                  • Stay aware of official disaster
-                  announcements.
-                </p>
+                {result.sachet.preparedness_guidance &&
+                 result.sachet.preparedness_guidance.length > 0 ? (
 
-                <p>
-                  • Check SACHET regularly for
-                  newly issued alerts.
-                </p>
+                  result.sachet.preparedness_guidance.map(
+                    (guidance, index) => (
+
+                      <p key={index}>
+                        • {guidance}
+                      </p>
+
+                    )
+                  )
+
+                ) : (
+
+                  <>
+
+                    <p>
+                      • Keep basic emergency
+                      supplies ready.
+                    </p>
+
+                    <p>
+                      • Keep emergency contacts
+                      available.
+                    </p>
+
+                    <p>
+                      • Follow instructions issued
+                      by the relevant authorities.
+                    </p>
+
+                    <p>
+                      • Continue monitoring official
+                      SACHET alerts.
+                    </p>
+
+                  </>
+
+                )}
 
               </div>
 
@@ -671,7 +872,7 @@ function PreDisasterDashboard() {
               alert information and converts
               the alert's severity, urgency and
               certainty into an explainable
-              internal preparedness score.
+              internal alert assessment.
             </p>
 
             <p>
