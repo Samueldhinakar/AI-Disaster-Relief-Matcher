@@ -1046,6 +1046,22 @@ def get_sachet_alerts(district_name=None):
         "cap_public_website/rss/rss_india.xml"
     )
 
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/154.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "application/rss+xml, "
+            "application/xml, "
+            "text/xml, "
+            "*/*"
+        ),
+        "Connection": "close"
+    }
+
     try:
 
         # -------------------------------------------------
@@ -1056,7 +1072,8 @@ def get_sachet_alerts(district_name=None):
 
             response = requests.get(
                 feed_url,
-                timeout=(5, 15)
+                headers=headers,
+                timeout=(15, 45)
             )
 
         except requests.exceptions.Timeout:
@@ -1181,9 +1198,7 @@ def get_sachet_alerts(district_name=None):
                 continue
 
             # -------------------------------------------------
-            # 8. Get the official SACHET affected area
-            #
-            #    This comes from CAP <areaDesc>
+            # 8. Get official SACHET affected area
             # -------------------------------------------------
 
             area = (
@@ -1195,11 +1210,8 @@ def get_sachet_alerts(district_name=None):
             )
 
             # -------------------------------------------------
-            # 9. Do NOT use headline or title for
-            #    district matching.
-            #
-            #    Only the official affected-area field
-            #    is used.
+            # 9. Only use official areaDesc
+            #    for district matching
             # -------------------------------------------------
 
             if not area:
@@ -1208,15 +1220,14 @@ def get_sachet_alerts(district_name=None):
             area_lower = area.lower()
 
             # -------------------------------------------------
-            # 10. Check whether the selected district
-            #     is actually present in the affected area
+            # 10. Check selected district
             # -------------------------------------------------
 
             if district_filter not in area_lower:
                 continue
 
             # -------------------------------------------------
-            # 11. Add the verified matching alert
+            # 11. Add verified matching alert
             # -------------------------------------------------
 
             alerts.append({
@@ -1330,6 +1341,7 @@ def get_sachet_alerts(district_name=None):
         }
 
     except Exception as e:
+
         return {
             "status": "error",
             "error_type": "unknown",
