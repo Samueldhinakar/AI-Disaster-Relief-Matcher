@@ -1,5 +1,6 @@
 import re
 from flask import Flask, request, jsonify, send_from_directory
+from flask import request, jsonify, session
 import os
 from flask_cors import CORS
 import sqlite3
@@ -8,6 +9,9 @@ import requests
 import csv
 import math
 import xml.etree.ElementTree as ET
+from datetime import timedelta
+from flask import session
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 CORS(app)
@@ -16,6 +20,69 @@ FRONTEND_FOLDER = os.path.join(
     "frontend",
     "dist"
 )
+
+# Authentication and session configuration
+app.config["SECRET_KEY"] = os.environ.get(
+    "SECRET_KEY",
+    "local-development-key-change-before-deployment"
+)
+
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = (
+    os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+)
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
+
+def get_current_user():
+    """Return the logged-in user's public account details."""
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return None
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, name, email, role, created_at
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,)
+        ).fetchone()
+
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def login_required_roles(*allowed_roles):
+    """Decorator to require login and an allowed account role."""
+    from functools import wraps
+
+    def decorator(view_function):
+        @wraps(view_function)
+        def wrapped(*args, **kwargs):
+            user = get_current_user()
+
+            if not user:
+                session.clear()
+                return jsonify({
+                    "error": "Authentication required"
+                }), 401
+
+            if user["role"] not in allowed_roles:
+                return jsonify({
+                    "error": "You do not have permission to access this resource"
+                }), 403
+
+            return view_function(*args, **kwargs)
+
+        return wrapped
+    return decorator
+
+
 DISTRICT_COORDINATES = {
 
     "ARIYALUR": (11.1401, 79.0786),
@@ -57,6 +124,139 @@ DISTRICT_COORDINATES = {
     "VILLUPURAM": (11.9401, 79.4861),
     "VIRUDHUNAGAR": (9.5680, 77.9624)
 }
+
+@app.route("/api/auth/register", methods=["POST"])
+def register():
+    data = request.get_json(silent=True) or {}
+
+    name = str(data.get("name", "")).strip()
+    email = str(data.get("email", "")).strip().lower()
+    password = data.get("password", "")
+    role = data.get("role", "")
+
+    if not name or len(name) > 100:
+        return jsonify({
+            "error": "Name is required and must be at most 100 characters"
+        }), 400
+
+    if len(email) > 254 or not re.fullmatch(
+        r"[^@\s]+@[^@\s]+\.[^@\s]+", email
+    ):
+        return jsonify({"error": "Enter a valid email address"}), 400
+
+    if not isinstance(password, str) or len(password) < 10:
+        return jsonify({
+            "error": "Password must contain at least 10 characters"
+        }), 400
+
+    if len(password) > 128:
+        return jsonify({
+            "error": "Password is too long"
+        }), 400
+
+    # Public registration cannot create administrator accounts.
+    if role not in ("rescue_team", "donor"):
+        return jsonify({
+            "error": "Role must be rescue_team or donor"
+        }), 400
+
+    password_hash = generate_password_hash(password)
+    created_at = datetime.now(timezone.utc).isoformat()
+
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO users
+                (name, email, password_hash, role, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (name, email, password_hash, role, created_at)
+        )
+        conn.commit()
+
+        return jsonify({
+            "message": "Registration successful. Please log in."
+        }), 201
+
+    except Exception as exc:
+        # SQLite unique constraint: email already registered.
+        if "UNIQUE constraint failed: users.email" in str(exc):
+            return jsonify({
+                "error": "An account with this email already exists"
+            }), 409
+        raise
+    finally:
+        conn.close()
+
+@app.route("/api/auth/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True) or {}
+
+    email = str(data.get("email", "")).strip().lower()
+    password = data.get("password", "")
+
+    if not email or not isinstance(password, str):
+        return jsonify({
+            "error": "Email and password are required"
+        }), 400
+
+    conn = get_db()
+    try:
+        user = conn.execute(
+            """
+            SELECT id, name, email, password_hash, role, created_at
+            FROM users
+            WHERE email = ?
+            """,
+            (email,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not user or not check_password_hash(
+        user["password_hash"], password
+    ):
+        return jsonify({
+            "error": "Invalid email or password"
+        }), 401
+
+    # Start a fresh session after successful authentication.
+    session.clear()
+    session.permanent = True
+    session["user_id"] = user["id"]
+
+    return jsonify({
+        "message": "Login successful",
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"],
+            "role": user["role"]
+        }
+    }), 200
+
+@app.route("/api/auth/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"message": "Logged out successfully"}), 200
+
+
+@app.route("/api/auth/me", methods=["GET"])
+def auth_me():
+    user = get_current_user()
+
+    if not user:
+        return jsonify({
+            "authenticated": False,
+            "user": None
+        }), 200
+
+    return jsonify({
+        "authenticated": True,
+        "user": user
+    }), 200
+
 @app.route("/")
 def serve_frontend():
     return send_from_directory(FRONTEND_FOLDER, "index.html")
@@ -141,7 +341,44 @@ def init_db():
     """)
 
     conn.commit()
+    
+    
+    # Stores rescue team and donor accounts.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL
+                CHECK (role IN ('rescue_team', 'donor')),
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    # Safely add ownership columns to existing databases.
+    # Existing records remain unowned (NULL); do not assign
+    # old records to a newly registered account.
+    for table_name in ("resources", "requests"):
+        columns = {
+            row["name"]
+            for row in conn.execute(
+                f"PRAGMA table_info({table_name})"
+            ).fetchall()
+        }
+
+        if "owner_user_id" not in columns:
+            conn.execute(
+                f"""
+                ALTER TABLE {table_name}
+                ADD COLUMN owner_user_id INTEGER
+                REFERENCES users(id)
+                """
+            )
+
+    conn.commit()
     conn.close()
+
 
 def row_to_dict(row):
     return dict(row)
@@ -4077,139 +4314,208 @@ def health():
 
 @app.route("/api/resources", methods=["GET", "POST"])
 def resources():
-    conn = get_db()
-
+    # Only logged-in donors can post resources.
     if request.method == "POST":
+        user = get_current_user()
+
+        if not user:
+            return jsonify({
+                "error": "Please log in to post a resource."
+            }), 401
+
+        if user["role"] != "donor":
+            return jsonify({
+                "error": "Only donor accounts can post resources."
+            }), 403
+
         data = request.get_json() or {}
 
         required = [
             "type", "name", "quantity", "unit",
-            "urgency", "location", "provider"
+            "urgency", "location"
         ]
 
-        missing = [x for x in required if not data.get(x)]
+        missing = [field for field in required if not data.get(field)]
 
         if missing:
-            conn.close()
             return jsonify({
                 "error": "Missing fields",
                 "fields": missing
             }), 400
 
-        conn.execute("""
-            INSERT INTO resources
-            (type, name, quantity, unit, urgency, location,
-             latitude, longitude, provider, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Available', ?)
-        """, (
-            data["type"],
-            data["name"],
-            float(data["quantity"]),
-            data["unit"],
-            data["urgency"],
-            data["location"],
-            data.get("latitude"),
-            data.get("longitude"),
-            data["provider"],
-            datetime.now().isoformat(timespec="seconds")
-        ))
+        try:
+            quantity = float(data["quantity"])
+            if quantity <= 0:
+                return jsonify({
+                    "error": "Quantity must be greater than zero."
+                }), 400
+        except (TypeError, ValueError):
+            return jsonify({
+                "error": "Quantity must be a valid number."
+            }), 400
 
-        conn.commit()
+        conn = get_db()
+        try:
+            conn.execute("""
+                INSERT INTO resources
+                (
+                    type, name, quantity, unit, urgency, location,
+                    latitude, longitude, provider, status, created_at,
+                    owner_user_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Available', ?, ?)
+            """, (
+                data["type"],
+                data["name"],
+                quantity,
+                data["unit"],
+                data["urgency"],
+                data["location"],
+                data.get("latitude"),
+                data.get("longitude"),
+                user["name"],
+                datetime.now().isoformat(timespec="seconds"),
+                user["id"]
+            ))
+
+            conn.commit()
+            return jsonify({
+                "message": "Resource posted successfully"
+            }), 201
+        finally:
+            conn.close()
+
+    # Keep the existing available-resource listing for AI matching.
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT * FROM resources
+            WHERE status = 'Available'
+            ORDER BY id DESC
+        """).fetchall()
+
+        return jsonify([row_to_dict(row) for row in rows])
+    finally:
         conn.close()
 
-        return jsonify({
-            "message": "Resource posted successfully"
-        }), 201
-
-    rows = conn.execute("""
-        SELECT * FROM resources
-        WHERE status='Available'
-        ORDER BY id DESC
-    """).fetchall()
-
-    conn.close()
-    return jsonify([row_to_dict(r) for r in rows])
 
 @app.route("/api/requests", methods=["GET", "POST"])
 def requests_api():
-    conn = get_db()
-
+    # Only logged-in rescue teams can create requests.
     if request.method == "POST":
+        user = get_current_user()
+
+        if not user:
+            return jsonify({
+                "error": "Please log in to create a rescue request."
+            }), 401
+
+        if user["role"] != "rescue_team":
+            return jsonify({
+                "error": "Only rescue team accounts can create requests."
+            }), 403
+
         data = request.get_json() or {}
 
         required = [
             "type", "name", "quantity", "unit",
-            "urgency", "location", "team"
+            "urgency", "location"
         ]
 
-        missing = [x for x in required if not data.get(x)]
+        missing = [field for field in required if not data.get(field)]
 
         if missing:
-            conn.close()
             return jsonify({
                 "error": "Missing fields",
                 "fields": missing
             }), 400
 
-        conn.execute("""
-            INSERT INTO requests
-            (type, name, quantity, unit, urgency, location,
-             latitude, longitude, team, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Open', ?)
-        """, (
-            data["type"],
-            data["name"],
-            float(data["quantity"]),
-            data["unit"],
-            data["urgency"],
-            data["location"],
-            data.get("latitude"),
-            data.get("longitude"),
-            data["team"],
-            datetime.now().isoformat(timespec="seconds")
-        ))
+        try:
+            quantity = float(data["quantity"])
+            if quantity <= 0:
+                return jsonify({
+                    "error": "Quantity must be greater than zero."
+                }), 400
+        except (TypeError, ValueError):
+            return jsonify({
+                "error": "Quantity must be a valid number."
+            }), 400
 
-        conn.commit()
+        conn = get_db()
+        try:
+            conn.execute("""
+                INSERT INTO requests
+                (
+                    type, name, quantity, unit, urgency, location,
+                    latitude, longitude, team, status, created_at,
+                    owner_user_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Open', ?, ?)
+            """, (
+                data["type"],
+                data["name"],
+                quantity,
+                data["unit"],
+                data["urgency"],
+                data["location"],
+                data.get("latitude"),
+                data.get("longitude"),
+                user["name"],
+                datetime.now().isoformat(timespec="seconds"),
+                user["id"]
+            ))
+
+            conn.commit()
+            return jsonify({
+                "message": "Request posted successfully"
+            }), 201
+        finally:
+            conn.close()
+
+    # Keep the existing open-request listing for AI matching.
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT * FROM requests
+            WHERE status = 'Open'
+            ORDER BY id DESC
+        """).fetchall()
+
+        return jsonify([row_to_dict(row) for row in rows])
+    finally:
         conn.close()
 
-        return jsonify({
-            "message": "Request posted successfully"
-        }), 201
-
-    rows = conn.execute("""
-        SELECT * FROM requests
-        WHERE status='Open'
-        ORDER BY id DESC
-    """).fetchall()
-
-    conn.close()
-    return jsonify([row_to_dict(r) for r in rows])
 @app.route("/api/requests/all")
+@login_required_roles("rescue_team", "donor")
 def all_requests():
     conn = get_db()
 
-    rows = conn.execute("""
-        SELECT * FROM requests
-        ORDER BY id DESC
-    """).fetchall()
+    try:
+        rows = conn.execute("""
+            SELECT * FROM requests
+            ORDER BY id DESC
+        """).fetchall()
 
-    conn.close()
+        return jsonify([row_to_dict(row) for row in rows])
+    finally:
+        conn.close()
 
-    return jsonify([row_to_dict(r) for r in rows])
+
 def get_matches():
     conn = get_db()
 
-    resources = conn.execute("""
-        SELECT * FROM resources
-        WHERE status='Available' AND quantity > 0
-    """).fetchall()
+    try:
+        resources = conn.execute("""
+            SELECT * FROM resources
+            WHERE status = 'Available' AND quantity > 0
+        """).fetchall()
 
-    requests = conn.execute("""
-        SELECT * FROM requests
-        WHERE status='Open'
-    """).fetchall()
-
-    conn.close()
+        requests = conn.execute("""
+            SELECT * FROM requests
+            WHERE status = 'Open'
+        """).fetchall()
+    finally:
+        conn.close()
 
     matches = []
 
@@ -4217,12 +4523,11 @@ def get_matches():
         candidates = []
 
         for resource in resources:
-
-            # Match resource category/type
+            # Match resource category/type.
             if resource["type"].lower() != req["type"].lower():
                 continue
 
-            # Match product name
+            # Match product name.
             if resource["name"].lower() != req["name"].lower():
                 continue
 
@@ -4242,21 +4547,21 @@ def get_matches():
                 )
             })
 
-        # Highest scoring donor first
+        # Highest scoring donor first.
         candidates.sort(
-            key=lambda x: x["score"],
+            key=lambda item: item["score"],
             reverse=True
         )
 
-        # Add ALL suitable donors
+        # Keep all suitable donors for partial fulfilment.
         if candidates:
             matches.extend(candidates)
 
-    # Sort by urgency first, then AI score
+    # Sort by urgency first, then AI score.
     matches.sort(
-        key=lambda x: (
-            urgency_score(x["request"]["urgency"]),
-            x["score"]
+        key=lambda item: (
+            urgency_score(item["request"]["urgency"]),
+            item["score"]
         ),
         reverse=True
     )
@@ -4264,170 +4569,174 @@ def get_matches():
     return matches
 
 @app.route("/api/matches")
+@login_required_roles("rescue_team", "donor")
 def matches():
     return jsonify(get_matches())
 
+
 @app.route("/api/matches/run", methods=["POST"])
+@login_required_roles("rescue_team")
 def run_matching():
     return jsonify(get_matches())
 
+
 @app.route("/api/matches/<int:request_id>/confirm", methods=["POST"])
+@login_required_roles("rescue_team")
 def confirm_match(request_id):
+    user = get_current_user()
     data = request.get_json() or {}
     resource_id = data.get("resource_id")
-    ai_score = float(data.get("ai_score", 0))
 
     if not resource_id:
         return jsonify({"error": "resource_id is required"}), 400
 
+    try:
+        resource_id = int(resource_id)
+        ai_score = float(data.get("ai_score", 0))
+    except (TypeError, ValueError):
+        return jsonify({
+            "error": "resource_id and ai_score must be valid numbers"
+        }), 400
+
+    if resource_id <= 0 or not math.isfinite(ai_score):
+        return jsonify({"error": "Invalid resource_id or ai_score"}), 400
+
     conn = get_db()
 
-    # Get the rescue request
-    req = conn.execute(
-        "SELECT * FROM requests WHERE id=?",
-        (request_id,)
-    ).fetchone()
-
-    # Get the donor resource
-    resource = conn.execute(
-        "SELECT * FROM resources WHERE id=?",
-        (resource_id,)
-    ).fetchone()
-
-    if not req or not resource:
-        conn.close()
-        return jsonify({
-            "error": "Request or resource not found"
-        }), 404
-
-    # Allow Open requests to receive multiple donors
-    if req["status"] == "Matched":
-        conn.close()
-        return jsonify({
-            "error": "This request has already been completely fulfilled."
-        }), 400
-
-    available = float(resource["quantity"])
-    requested_quantity = float(req["quantity"])
-
-    if available <= 0:
-        conn.close()
-        return jsonify({
-            "error": "Resource is no longer available."
-        }), 400
-
-    # -------------------------------------------------
-    # Calculate how much has already been supplied
-    # -------------------------------------------------
-
-    fulfilled_row = conn.execute("""
-        SELECT COALESCE(SUM(supplied_quantity), 0) AS total_supplied
-        FROM match_history
-        WHERE request_id=?
-    """, (request_id,)).fetchone()
-
-    already_supplied = float(fulfilled_row["total_supplied"])
-
-    remaining_needed = requested_quantity - already_supplied
-
-    if remaining_needed <= 0:
-        conn.execute(
-            "UPDATE requests SET status='Matched' WHERE id=?",
+    try:
+        req = conn.execute(
+            "SELECT * FROM requests WHERE id = ?",
             (request_id,)
-        )
+        ).fetchone()
+
+        resource = conn.execute(
+            "SELECT * FROM resources WHERE id = ?",
+            (resource_id,)
+        ).fetchone()
+
+        if not req or not resource:
+            return jsonify({
+                "error": "Request or resource not found"
+            }), 404
+
+        # Only the rescue team that owns the request can confirm it.
+        if req["owner_user_id"] != user["id"]:
+            return jsonify({
+                "error": "You can only confirm matches for your own requests."
+            }), 403
+
+        # Never use an unowned or depleted resource for a new match.
+        # Older records with NULL ownership must be reposted by a donor.
+        if resource["owner_user_id"] is None:
+            return jsonify({
+                "error": (
+                    "This resource has no owner account. "
+                    "Ask a registered donor to post it again."
+                )
+            }), 409
+
+        if resource["status"] != "Available":
+            return jsonify({
+                "error": "This resource is no longer available."
+            }), 409
+
+        if req["status"] == "Matched":
+            return jsonify({
+                "error": "This request has already been completely fulfilled."
+            }), 400
+
+        available = float(resource["quantity"])
+        requested_quantity = float(req["quantity"])
+
+        if available <= 0:
+            return jsonify({
+                "error": "Resource is no longer available."
+            }), 400
+
+        fulfilled_row = conn.execute("""
+            SELECT COALESCE(SUM(supplied_quantity), 0) AS total_supplied
+            FROM match_history
+            WHERE request_id = ?
+        """, (request_id,)).fetchone()
+
+        already_supplied = float(fulfilled_row["total_supplied"])
+        remaining_needed = requested_quantity - already_supplied
+
+        if remaining_needed <= 0:
+            conn.execute("""
+                UPDATE requests SET status = 'Matched' WHERE id = ?
+            """, (request_id,))
+            conn.commit()
+
+            return jsonify({
+                "message": "This request has already been completely fulfilled."
+            }), 400
+
+        supplied = min(remaining_needed, available)
+        remaining_resource = available - supplied
+        remaining_request = remaining_needed - supplied
+
+        conn.execute("""
+            INSERT INTO match_history
+            (request_id, resource_id, resource_name, resource_type,
+             requested_quantity, supplied_quantity, unit, urgency,
+             location, donor, rescue_team, ai_score, matched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            req["id"],
+            resource["id"],
+            resource["name"],
+            resource["type"],
+            requested_quantity,
+            supplied,
+            resource["unit"],
+            req["urgency"],
+            req["location"],
+            resource["provider"],
+            req["team"],
+            ai_score,
+            datetime.now().isoformat(timespec="seconds")
+        ))
+
+        if remaining_resource <= 0:
+            conn.execute("""
+                UPDATE resources
+                SET quantity = 0, status = 'Matched'
+                WHERE id = ?
+            """, (resource_id,))
+        else:
+            conn.execute("""
+                UPDATE resources SET quantity = ? WHERE id = ?
+            """, (remaining_resource, resource_id))
+
+        if remaining_request <= 0:
+            conn.execute("""
+                UPDATE requests SET status = 'Matched' WHERE id = ?
+            """, (request_id,))
+            final_status = "Matched"
+        else:
+            conn.execute("""
+                UPDATE requests SET status = 'Open' WHERE id = ?
+            """, (request_id,))
+            final_status = "Partially Matched"
+
         conn.commit()
-        conn.close()
 
         return jsonify({
-            "message": "This request has already been completely fulfilled."
-        }), 400
+            "message": "Donor contribution confirmed successfully.",
+            "supplied_quantity": supplied,
+            "remaining_request_quantity": remaining_request,
+            "remaining_resource_quantity": remaining_resource,
+            "request_status": final_status
+        })
 
-    # -------------------------------------------------
-    # Calculate this donor's contribution
-    # -------------------------------------------------
+    except Exception:
+        conn.rollback()
+        app.logger.exception("Error confirming resource match")
+        return jsonify({"error": "Unable to confirm match"}), 500
+    finally:
+        conn.close()
 
-    supplied = min(remaining_needed, available)
-
-    remaining_resource = available - supplied
-    remaining_request = remaining_needed - supplied
-
-    # -------------------------------------------------
-    # Save this donor match in history
-    # -------------------------------------------------
-
-    conn.execute("""
-        INSERT INTO match_history
-        (request_id, resource_id, resource_name, resource_type,
-         requested_quantity, supplied_quantity, unit, urgency,
-         location, donor, rescue_team, ai_score, matched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        req["id"],
-        resource["id"],
-        resource["name"],
-        resource["type"],
-        requested_quantity,
-        supplied,
-        resource["unit"],
-        req["urgency"],
-        req["location"],
-        resource["provider"],
-        req["team"],
-        ai_score,
-        datetime.now().isoformat(timespec="seconds")
-    ))
-
-    # -------------------------------------------------
-    # Update donor inventory
-    # -------------------------------------------------
-
-    if remaining_resource <= 0:
-        conn.execute("""
-            UPDATE resources
-            SET quantity=0, status='Matched'
-            WHERE id=?
-        """, (resource_id,))
-    else:
-        conn.execute("""
-            UPDATE resources
-            SET quantity=?
-            WHERE id=?
-        """, (remaining_resource, resource_id))
-
-    # -------------------------------------------------
-    # Update request status
-    # -------------------------------------------------
-
-    if remaining_request <= 0:
-        # Entire request has been fulfilled
-        conn.execute("""
-            UPDATE requests
-            SET status='Matched'
-            WHERE id=?
-        """, (request_id,))
-
-        final_status = "Matched"
-    else:
-        # More donors are still required
-        # Keep request Open so another donor can fulfill it
-        conn.execute("""
-            UPDATE requests
-            SET status='Open'
-            WHERE id=?
-        """, (request_id,))
-
-        final_status = "Partially Matched"
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "message": "Donor contribution confirmed successfully.",
-        "supplied_quantity": supplied,
-        "remaining_request_quantity": remaining_request,
-        "remaining_resource_quantity": remaining_resource,
-        "request_status": final_status
-    })
 @app.route("/api/inventory")
 def inventory():
     conn = get_db()
@@ -4445,8 +4754,11 @@ def inventory():
 
 
 
+
 @app.route("/api/requests/<int:request_id>/status", methods=["PUT"])
+@login_required_roles("rescue_team")
 def update_request_status(request_id):
+    user = get_current_user()
     data = request.get_json() or {}
     new_status = data.get("status")
 
@@ -4465,30 +4777,35 @@ def update_request_status(request_id):
 
     conn = get_db()
 
-    request_row = conn.execute(
-        "SELECT * FROM requests WHERE id=?",
-        (request_id,)
-    ).fetchone()
+    try:
+        request_row = conn.execute(
+            "SELECT * FROM requests WHERE id = ?",
+            (request_id,)
+        ).fetchone()
 
-    if not request_row:
-        conn.close()
+        if not request_row:
+            return jsonify({"error": "Request not found"}), 404
+
+        if request_row["owner_user_id"] != user["id"]:
+            return jsonify({
+                "error": "You can only update your own requests."
+            }), 403
+
+        conn.execute(
+            "UPDATE requests SET status = ? WHERE id = ?",
+            (new_status, request_id)
+        )
+
+        conn.commit()
+
         return jsonify({
-            "error": "Request not found"
-        }), 404
+            "message": "Request status updated successfully",
+            "request_id": request_id,
+            "status": new_status
+        })
+    finally:
+        conn.close()
 
-    conn.execute(
-        "UPDATE requests SET status=? WHERE id=?",
-        (new_status, request_id)
-    )
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "message": "Request status updated successfully",
-        "request_id": request_id,
-        "status": new_status
-    })
 @app.route("/api/history")
 def history():
     conn = get_db()
@@ -4503,20 +4820,51 @@ def history():
 
     return jsonify([row_to_dict(r) for r in rows])
 
-@app.route("/api/reset", methods=["POST"])
-def reset():
+@app.route("/api/my/resources", methods=["GET"])
+@login_required_roles("donor")
+def my_resources():
+    user = get_current_user()
     conn = get_db()
 
-    conn.execute("DELETE FROM resources")
-    conn.execute("DELETE FROM requests")
-    conn.execute("DELETE FROM match_history")
+    try:
+        rows = conn.execute("""
+            SELECT *
+            FROM resources
+            WHERE owner_user_id = ?
+            ORDER BY id DESC
+        """, (user["id"],)).fetchall()
 
-    conn.commit()
-    conn.close()
+        return jsonify([row_to_dict(row) for row in rows])
+    finally:
+        conn.close()
 
+
+@app.route("/api/my/requests", methods=["GET"])
+@login_required_roles("rescue_team")
+def my_requests():
+    user = get_current_user()
+    conn = get_db()
+
+    try:
+        rows = conn.execute("""
+            SELECT *
+            FROM requests
+            WHERE owner_user_id = ?
+            ORDER BY id DESC
+        """, (user["id"],)).fetchall()
+
+        return jsonify([row_to_dict(row) for row in rows])
+    finally:
+        conn.close()
+
+
+
+@app.route("/api/reset", methods=["POST"])
+def reset():
     return jsonify({
-        "message": "Demo data and match history cleared."
-    })
+        "error": "Database reset is disabled for security."
+    }), 403
+
 
 init_db()
 

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
+import "./auth-ui.css";
 import LiveDisasterMap from "./LiveDisasterMap";
 import PreDisasterDashboard from "./PreDisasterDashboard";
+import { CloudSun } from "lucide-react";
 import {
   AlertTriangle, BrainCircuit, CheckCircle2, Droplets, HeartPulse,
   MapPin, Package, RefreshCw, Shield, Truck, Users, Utensils,
@@ -44,31 +46,185 @@ function App() {
   const [matches, setMatches] = useState([]);
   const [history, setHistory] = useState([]);
   const [message, setMessage] = useState("");
+  const [currentUser, setCurrentUser] = useState(null);
+const [authLoading, setAuthLoading] = useState(true);
+const [authMode, setAuthMode] = useState("login");
+  const userRole = currentUser?.role;
 
-  const loadData = async () => {
+  const roleTabs = {
+    rescue_team: [
+      "dashboard",
+      "team",
+      "matches",
+      "map",
+      "tracking",
+      "predisaster",
+    ],
+    donor: [
+      "dashboard",
+      "donor",
+      "inventory",
+      "history",
+    ],
+  };
+const [authError, setAuthError] = useState("");
+const [authForm, setAuthForm] = useState({
+  name: "",
+  email: "",
+  password: "",
+  role: "rescue_team"
+  
+});
+const loadData = async () => {
   try {
+    const fetchJSON = async (url) => {
+      const response = await fetch(url, {
+        credentials: "include"
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || `Request failed: ${response.status}`
+        );
+      }
+
+      return data;
+    };
+
     const [r, q, allQ, m, h] = await Promise.all([
-      fetch(`${API}/resources`).then(x => x.json()),
-      fetch(`${API}/requests`).then(x => x.json()),
-      fetch(`${API}/requests/all`).then(x => x.json()),
-      fetch(`${API}/matches`).then(x => x.json()),
-      fetch(`${API}/history`).then(x => x.json())
+      fetchJSON(`${API}/resources`),
+      fetchJSON(`${API}/requests`),
+      fetchJSON(`${API}/requests/all`),
+      fetchJSON(`${API}/matches`),
+      fetchJSON(`${API}/history`)
     ]);
 
-    setResources(r);
-    setRequests(q);
-    setAllRequests(allQ);
-    setMatches(m);
-    setHistory(h);
-  } catch {
-    setMessage("Backend is not running. Start Flask first.");
+    setResources(Array.isArray(r) ? r : []);
+    setRequests(Array.isArray(q) ? q : []);
+    setAllRequests(Array.isArray(allQ) ? allQ : []);
+    setMatches(Array.isArray(m) ? m : []);
+    setHistory(Array.isArray(h) ? h : []);
+
+    setMessage("");
+  } catch (error) {
+    console.error("Failed to load dashboard data:", error);
+
+    if (
+      error.message === "Authentication required" ||
+      error.message.includes("401")
+    ) {
+      setMessage("Please log in to access your dashboard.");
+    } else if (error.message.includes("permission")) {
+      setMessage("Your account does not have permission for this action.");
+    } else {
+      setMessage(`Could not load dashboard data: ${error.message}`);
+    }
   }
 };
 
   useEffect(() => {
-    loadData();
-  }, []);
+  const checkLogin = async () => {
+    try {
+      const response = await fetch(`${API}/auth/me`, {
+        credentials: "include"
+      });
+      const data = await response.json();
 
+      if (response.ok && data.authenticated && data.user) {
+        setCurrentUser(data.user);
+      }
+    } catch (error) {
+      console.error("Login check failed:", error);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  checkLogin();
+}, []);
+
+useEffect(() => {
+  if (currentUser) {
+    loadData();
+  }
+}, [currentUser]);
+
+useEffect(() => {
+  if (!currentUser) return;
+  const allowed = currentUser.role === "rescue_team"
+    ? ["dashboard", "team", "matches", "map", "tracking", "predisaster"]
+    : ["dashboard", "donor", "inventory", "history"];
+  if (!allowed.includes(tab)) setTab("dashboard");
+}, [currentUser, tab]);
+  const submitAuth = async (e) => {
+  e.preventDefault();
+  setAuthError("");
+
+  const isRegister = authMode === "register";
+  const endpoint = isRegister ? "/auth/register" : "/auth/login";
+
+  const payload = isRegister
+    ? authForm
+    : {
+        email: authForm.email,
+        password: authForm.password
+      };
+
+  try {
+    const response = await fetch(`${API}${endpoint}`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setAuthError(data.error || "Authentication failed.");
+      return;
+    }
+
+    if (isRegister) {
+      setAuthMode("login");
+      setAuthForm({
+        name: "",
+        email: authForm.email,
+        password: "",
+        role: authForm.role
+      });
+      setAuthError("Registration successful. Please log in.");
+      return;
+    }
+
+    setCurrentUser(data.user);
+    setTab("dashboard");
+    setMessage("Welcome, " + data.user.name);
+  } catch (error) {
+    console.error(error);
+    setAuthError("Cannot connect to the backend. Check that Flask is running.");
+  }
+};
+
+const logout = async () => {
+  try {
+    await fetch(`${API}/auth/logout`, {
+      method: "POST",
+      credentials: "include"
+    });
+  } finally {
+    setCurrentUser(null);
+    setTab("dashboard");
+    setMatches([]);
+    setAllRequests([]);
+    setRequests([]);
+    setMessage("");
+  }
+};
   const submitResource = async (e) => {
     e.preventDefault();
 
@@ -211,7 +367,84 @@ function App() {
       x => x.urgency === "Critical"
     ).length
   };
+  if (authLoading) {
+    return <div className="empty">Checking login...</div>;
+  }
 
+  // Public Citizen Portal: this view does not require an account.
+  if (authMode === "citizen") {
+    return (
+      <div className="citizen-page">
+        <header className="citizen-header">
+          <h1>Citizen Portal</h1>
+          <button type="button" onClick={() => setAuthMode("login")}>
+            Back to Login
+          </button>
+        </header>
+        <PreDisasterDashboard />
+      </div>
+    );
+  }
+
+if (!currentUser) {
+  return (
+    <main className="auth-screen">
+      <section className="auth-layout">
+        <aside className="auth-intro">
+          <div className="auth-brand">
+            <span className="auth-brand-mark"><Shield size={25} strokeWidth={2.2} /></span>
+            <span>ReliefMatch <b>AI</b></span>
+          </div>
+          <div className="auth-intro-copy">
+            <span className="auth-eyebrow"><span className="auth-eyebrow-dot" /> DISASTER RESPONSE PLATFORM</span>
+            <h1>Help gets where<br />it’s needed <em>most.</em></h1>
+            <p>Connect urgent needs with available resources. Coordinate relief faster, smarter, and together.</p>
+            <div className="auth-feature-list">
+              <div><span className="auth-feature-icon"><HeartPulse size={18} /></span><span><b>Prioritize urgent needs</b><small>Bring critical requests into focus.</small></span></div>
+              <div><span className="auth-feature-icon"><MapPin size={18} /></span><span><b>Coordinate by location</b><small>Connect resources with nearby communities.</small></span></div>
+              <div><span className="auth-feature-icon"><Users size={18} /></span><span><b>Work as one network</b><small>Help teams and donors act together.</small></span></div>
+            </div>
+          </div>
+          <div className="auth-intro-footer"><span className="auth-live-dot" /> Built for coordinated disaster relief <span className="auth-footer-separator">•</span> Community first</div>
+          <div className="auth-decor auth-decor-one" /><div className="auth-decor auth-decor-two" />
+        </aside>
+        <section className="auth-form-panel">
+          <div className="auth-form-topline">
+            <span className="auth-mobile-brand"><Shield size={20} /> ReliefMatch AI</span>
+            <span className="auth-secure"><Shield size={14} /> Secure access</span>
+          </div>
+          <div className="auth-form-inner">
+            <div className="auth-form-heading">
+              <span className="auth-form-kicker">{authMode === "login" ? "WELCOME BACK" : "JOIN THE NETWORK"}</span>
+              <h2>{authMode === "login" ? "Sign in to your account" : "Create your account"}</h2>
+              <p>{authMode === "login" ? "Enter your details to continue to your workspace." : "Set up your account to start coordinating relief."}</p>
+            </div>
+            <form className="auth-form" onSubmit={submitAuth}>
+              {authMode === "register" && (
+                <>
+                  <label><span>Full name</span><input required autoComplete="name" placeholder="Enter your full name" value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} /></label>
+                  <label><span>Account type</span><select value={authForm.role} onChange={(e) => setAuthForm({ ...authForm, role: e.target.value })}><option value="rescue_team">Rescue Team</option><option value="donor">Donor / Organization</option></select></label>
+                </>
+              )}
+              <label><span>Email address</span><input required type="email" autoComplete="email" placeholder="you@example.com" value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} /></label>
+              <label><span>Password</span><input required type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} placeholder="Enter your password" value={authForm.password} onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} /></label>
+              {authError && <p className="auth-error" role="alert">{authError}</p>}
+              <button className="auth-submit" type="submit">{authMode === "login" ? "Sign in" : "Create account"}<span aria-hidden="true">→</span></button>
+            </form>
+            <div className="auth-switch">{authMode === "login" ? "New to ReliefMatch?" : "Already have an account?"}<button type="button" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthError(""); }}>{authMode === "login" ? "Create an account" : "Sign in"}</button></div>
+            {authMode === "login" && (
+              <div className="auth-citizen-wrap">
+                <div className="auth-divider"><span>OR</span></div>
+                <button type="button" className="auth-citizen-button" onClick={() => setAuthMode("citizen")}><CloudSun size={19} /><span><b>Open Citizen Portal</b><small>View public SACHET alerts</small></span><span className="auth-citizen-arrow">↗</span></button>
+              </div>
+            )}
+          </div>
+          <p className="auth-legal">By continuing, you agree to use this platform responsibly to support relief efforts.</p>
+        </section>
+      </section>
+    </main>
+  );
+}
   return (
     <div className="app">
       <header className="topbar">
@@ -238,91 +471,48 @@ function App() {
             className={tab === "dashboard" ? "active" : ""}
             onClick={() => setTab("dashboard")}
           >
-            Dashboard
-          </button>
-          <button
-  className={tab === "predisaster" ? "active" : ""}
-  onClick={() => setTab("predisaster")}
->
-  🌧️ Pre-Disaster Dashboard
-</button>
-
-          <button
-            className={tab === "donor" ? "active" : ""}
-            onClick={() => setTab("donor")}
-          >
-            Donor Resources
+            {userRole === "rescue_team" ? "Rescue Team Dashboard" : "Donor Dashboard"}
           </button>
 
-          <button
-            className={tab === "team" ? "active" : ""}
-            onClick={() => setTab("team")}
-          >
-            Rescue Requests
-          </button>
+          {userRole === "rescue_team" && (
+            <>
+              <button className={tab === "team" ? "active" : ""} onClick={() => setTab("team")}>
+                Rescue Requests
+              </button>
+              <button className={tab === "matches" ? "active" : ""} onClick={() => setTab("matches")}>
+                AI Matches
+              </button>
+              <button className={tab === "map" ? "active" : ""} onClick={() => setTab("map")}>
+                🗺️ Live Disaster Map
+              </button>
+              <button className={tab === "tracking" ? "active" : ""} onClick={() => setTab("tracking")}>
+                📋 Request Tracking
+              </button>
+              <button className={tab === "predisaster" ? "active" : ""} onClick={() => setTab("predisaster")}>
+                🌧️ SACHET / Pre-Disaster Alerts
+              </button>
+            </>
+          )}
 
-          <button
-            className={tab === "matches" ? "active" : ""}
-            onClick={() => setTab("matches")}
-          >
-            AI Matches
-          </button>
-          <button onClick={() => setTab("map")}>
-          🗺️ Live Disaster Map
-          </button>
-          <button
-  className={
-    tab === "predisaster"
-      ? "active"
-      : ""
-  }
-  onClick={() =>
-    setTab("predisaster")
-  }
->
-  🌧️ AI Risk Assessment
-</button>
-          <button
-  className={tab === "inventory" ? "active" : ""}
-  onClick={() => {
-    loadData();
-    setTab("inventory");
-  }}
->
-  📦 Resource Inventory
-</button>
-
-<button
-  className={tab === "tracking" ? "active" : ""}
-  onClick={() => {
-    loadData();
-    setTab("tracking");
-  }}
->
-  📋 Request Tracking
-</button>
-
-          <button
-            className={tab === "history" ? "active" : ""}
-            onClick={() => {
-              loadData();
-              setTab("history");
-            }}
-          >
-            <History size={16} />
-            Match History
-          </button>
+          {userRole === "donor" && (
+            <>
+              <button className={tab === "donor" ? "active" : ""} onClick={() => setTab("donor")}>
+                Post Available Resources
+              </button>
+              <button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}>
+                📦 Resource Inventory
+              </button>
+              <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
+                <History size={16} /> Match History
+              </button>
+            </>
+          )}
 
           <button onClick={loadData}>
-            <RefreshCw size={16} />
-            Refresh
+            <RefreshCw size={16} /> Refresh
           </button>
-
-          <button
-            className="danger-link"
-            onClick={resetDemo}
-          >
-            Reset Demo
+          <button type="button" className="danger-link" onClick={logout}>
+            Log Out
           </button>
         </aside>
 
@@ -334,97 +524,48 @@ function App() {
           )}
 
           {tab === "dashboard" && (
-            <>
-              <section className="hero">
+            <section className="role-dashboard">
+              <div className="page-heading">
                 <div>
-                  <p className="eyebrow">
-                    AI-POWERED EMERGENCY COORDINATION
-                  </p>
-
-                  <h2>
-                    Connect urgent needs with available relief
-                    resources.
-                  </h2>
-
+                  <p className="eyebrow">{userRole === "rescue_team" ? "FIELD OPERATIONS" : "DONOR PORTAL"}</p>
+                  <h2>{userRole === "rescue_team" ? "Rescue Team Dashboard" : "Donor Dashboard"}</h2>
                   <p>
-                    Donors post what they can provide. Rescue
-                    teams post what they need. The matching
-                    engine compares resource type, quantity,
-                    urgency and location.
+                    {userRole === "rescue_team"
+                      ? "Create urgent relief requests, review available resources, and coordinate deliveries."
+                      : "Share available relief supplies and review your resource inventory and match history."}
                   </p>
-
-                  <button
-                    className="primary"
-                    onClick={runAI}
-                  >
-                    <BrainCircuit size={18} />
-                    Run AI Matching
-                  </button>
                 </div>
-
-                <div className="hero-art">
-                  <AlertTriangle size={90} />
-                </div>
-              </section>
-
-              <div className="stats">
-                <Stat
-                  icon={<Package />}
-                  label="Available Resources"
-                  value={stats.resources}
-                />
-
-                <Stat
-                  icon={<AlertTriangle />}
-                  label="Open Requests"
-                  value={stats.requests}
-                />
-
-                <Stat
-                  icon={<BrainCircuit />}
-                  label="AI Matches"
-                  value={stats.matches}
-                />
-
-                <Stat
-                  icon={<HeartPulse />}
-                  label="Critical Requests"
-                  value={stats.critical}
-                />
               </div>
 
-              <section className="two-col">
+              <div className="stats">
+                <Stat icon={<Package />} label="Available Resources" value={resources.length} />
+                <Stat icon={<AlertTriangle />} label="Open Requests" value={requests.length} />
+                {userRole === "rescue_team" && (
+                  <>
+                    <Stat icon={<BrainCircuit />} label="AI Matches" value={matches.length} />
+                    <Stat icon={<HeartPulse />} label="Critical Requests" value={stats.critical} />
+                  </>
+                )}
+              </div>
+
+              <div className="two-col">
+                {userRole === "rescue_team" ? (
+                  <div className="card">
+                    <h3>Rescue operations</h3>
+                    <p>Submit a new request for food, water, medicine, shelter, or transport.</p>
+                    <button className="primary" onClick={() => setTab("team")}>Create Rescue Request</button>
+                    <p>When requests and donor resources are available, run AI matching to identify possible allocations.</p>
+                    <button className="primary" onClick={runAI}><BrainCircuit size={18} /> Run AI Matching</button>
+                  </div>
+                ) : (
+                  <div className="card">
+                    <h3>Contribute relief resources</h3>
+                    <p>Post available supplies so rescue teams can find resources for urgent needs.</p>
+                    <button className="primary" onClick={() => setTab("donor")}>Post Available Resource</button>
+                  </div>
+                )}
                 <div className="card">
-                  <h3>How the system works</h3>
-
-                  <Step
-                    n="1"
-                    title="Donor posts resource"
-                    text="Food, water, medicine, shelter or other available items."
-                  />
-
-                  <Step
-                    n="2"
-                    title="Rescue team posts request"
-                    text="Required item, quantity, urgency and affected location."
-                  />
-
-                  <Step
-                    n="3"
-                    title="AI calculates matches"
-                    text="The engine scores quantity, urgency, type and location."
-                  />
-
-                  <Step
-                    n="4"
-                    title="Team confirms match"
-                    text="Confirmed resources are saved in Match History and stock is reduced."
-                  />
-                </div>
-
-                <div className="card">
-                  <h3>Resource categories</h3>
-
+                  <h3>Available resource categories</h3>
                   <div className="category-grid">
                     <Category icon={<Utensils />} name="Food" />
                     <Category icon={<Droplets />} name="Water" />
@@ -433,9 +574,12 @@ function App() {
                     <Category icon={<Users />} name="Shelter" />
                     <Category icon={<Package />} name="Other" />
                   </div>
+                  {userRole === "rescue_team" && (
+                    <button className="secondary" onClick={() => setTab("map")}>Open Live Disaster Map</button>
+                  )}
                 </div>
-              </section>
-            </>
+              </div>
+            </section>
           )}
 
           {tab === "donor" && (
@@ -593,9 +737,7 @@ function App() {
             <HistoryPage history={history} />
           )}
 
-          {(tab === "dashboard" ||
-            tab === "donor" ||
-            tab === "team") && (
+          {(tab === "donor" || tab === "team") && (
             <section className="tables">
               <div className="card">
                 <h3>Recent Available Resources</h3>
