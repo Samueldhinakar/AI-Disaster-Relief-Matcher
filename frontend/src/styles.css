@@ -1336,3 +1336,31 @@ th {
   margin: auto;
   box-sizing: border-box;
 }
+.live-disaster-map-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border: 1px solid #cfe5d6;
+  border-radius: 12px;
+  background: #247a4a;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 3px 8px rgba(36, 122, 74, 0.12);
+  transition: background 0.2s ease, transform 0.2s ease,
+              box-shadow 0.2s ease;
+}
+
+.live-disaster-map-btn:hover {
+  background: #1b633b;
+  transform: translateY(-1px);
+  box-shadow: 0 5px 12px rgba(36, 122, 74, 0.18);
+}
+
+.live-disaster-map-btn:focus-visible {
+  outline: 3px solid rgba(36, 122, 74, 0.25);
+  outline-offset: 3px;
+}

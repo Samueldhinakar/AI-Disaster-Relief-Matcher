@@ -377,7 +377,12 @@ const logout = async () => {
       <div className="citizen-page">
         <header className="citizen-header">
           <h1>Citizen Portal</h1>
-          <button type="button" onClick={() => setAuthMode("login")}>
+          <button
+    type="button"
+    className="citizen-back-login"
+    onClick={() => setAuthMode("login")}
+  >
+    <span aria-hidden="true">←</span>
             Back to Login
           </button>
         </header>
@@ -575,7 +580,14 @@ if (!currentUser) {
                     <Category icon={<Package />} name="Other" />
                   </div>
                   {userRole === "rescue_team" && (
-                    <button className="secondary" onClick={() => setTab("map")}>Open Live Disaster Map</button>
+                    <button
+  type="button"
+  className="live-disaster-map-btn"
+  onClick={() => setShowLiveMap(true)}
+>
+  <span aria-hidden="true">🗺️</span>
+  Open Live Disaster Map
+</button>
                   )}
                 </div>
               </div>

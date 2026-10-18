@@ -70,3 +70,46 @@
   .auth-form-panel { padding:17px 20px 20px; }
   .auth-form-inner { padding-top:23px; }
 }
+
+/* Citizen Portal — Back to Login button */
+.citizen-header .citizen-back-login {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+
+  padding: 10px 17px;
+  border: 1px solid #cfe5d6;
+  border-radius: 12px;
+
+  background: rgba(255, 255, 255, 0.85);
+  color: #24764a;
+
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(31, 122, 77, 0.06);
+  transition: background 0.2s ease,
+              border-color 0.2s ease,
+              box-shadow 0.2s ease,
+              transform 0.2s ease;
+}
+
+.citizen-header .citizen-back-login:hover {
+  background: #eaf6ee;
+  border-color: #a9d2b7;
+  box-shadow: 0 4px 12px rgba(31, 122, 77, 0.10);
+  transform: translateY(-1px);
+}
+
+.citizen-header .citizen-back-login:focus-visible {
+  outline: 3px solid rgba(36, 118, 74, 0.22);
+  outline-offset: 3px;
+}
+
+.citizen-header .citizen-back-login span {
+  font-size: 18px;
+  line-height: 1;
+}
