@@ -583,7 +583,7 @@ if (!currentUser) {
                     <button
   type="button"
   className="live-disaster-map-btn"
-  onClick={() => setShowLiveMap(true)}
+  onClick={() => setTab("map")}
 >
   <span aria-hidden="true">🗺️</span>
   Open Live Disaster Map
